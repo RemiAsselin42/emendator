@@ -195,35 +195,35 @@ export default function App() {
             <span className="down">backend unreachable — start the sidecar</span>
           )}
         </p>
-      </header>
 
-      {result && (
-        <div className="version-bar">
-          <label className="mc-version">
-            Minecraft version
-            <select
-              value={version ?? ""}
-              disabled={scanning}
-              onChange={(e) => {
-                const pick = e.target.value;
-                if (pick) void runScan(result.modsPath, pick);
-              }}
-            >
-              {versionOptions.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {result.detection && (
-            <span className="note">
-              {result.detection.status === "confident" ? "auto-detected" : "selected"}
-              {!result.detection.runnerSupported && " · runtime not yet available"}
-            </span>
-          )}
-        </div>
-      )}
+        {result && (
+          <div className="version-bar">
+            <label className="mc-version">
+              Minecraft version
+              <select
+                value={version ?? ""}
+                disabled={scanning}
+                onChange={(e) => {
+                  const pick = e.target.value;
+                  if (pick) void runScan(result.modsPath, pick);
+                }}
+              >
+                {versionOptions.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {result.detection && (
+              <span className="note">
+                {result.detection.status === "confident" ? "auto-detected" : "selected"}
+                {!result.detection.runnerSupported && " · runtime not yet available"}
+              </span>
+            )}
+          </div>
+        )}
+      </header>
 
       <div className="layout">
         <nav className="sidebar" aria-label="panels">
