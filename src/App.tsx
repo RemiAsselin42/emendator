@@ -1,5 +1,36 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchHealth, type HealthResponse, type ScanResult, scanMods } from "./lib/api";
+import {
+  type Conflict,
+  fetchHealth,
+  type HealthResponse,
+  type ScanResult,
+  scanMods,
+} from "./lib/api";
+
+const CONFLICT_LABEL: Record<Conflict["type"], string> = {
+  duplicate_jar: "duplicate jar",
+  dependency: "dependency",
+  tag_overlap: "tag overlap",
+  recipe_collision: "recipe collision",
+  mixin_overlap: "mixin overlap",
+};
+
+// One-line subject for a conflict row, by type.
+function conflictSubject(c: Conflict): string {
+  const d = c.detail;
+  switch (c.type) {
+    case "duplicate_jar":
+      return String(d.modId ?? "");
+    case "dependency":
+      return `missing ${String(d.missing ?? "")}`;
+    case "tag_overlap":
+      return String(d.tag ?? "");
+    case "recipe_collision":
+      return String(d.recipe ?? "");
+    case "mixin_overlap":
+      return String(d.target ?? "");
+  }
+}
 
 export default function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -114,12 +145,44 @@ export default function App() {
             <span className="untestable">
               <span className="count">{result.counts.untestable}</span> not testable in server mode
             </span>
+            <span>
+              <span className="count">{result.counts.conflicts}</span> conflicts
+            </span>
             {result.counts.errors > 0 && (
               <span>
                 <span className="count">{result.counts.errors}</span> unreadable jars
               </span>
             )}
           </div>
+
+          {result.conflicts.length > 0 && (
+            <div className="panel">
+              <h2 className="panel-title">Conflicts</h2>
+              <table className="conflicts-table">
+                <thead>
+                  <tr>
+                    <th>severity</th>
+                    <th>type</th>
+                    <th>subject</th>
+                    <th>mods</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.conflicts.map((c) => (
+                    <tr key={`${c.type}-${conflictSubject(c)}-${c.members.join(",")}`}>
+                      <td className={`sev-${c.severity}`}>{c.severity}</td>
+                      <td>{CONFLICT_LABEL[c.type]}</td>
+                      <td className="subject">{conflictSubject(c)}</td>
+                      <td className="members">
+                        {c.members.join(", ")}
+                        {c.type === "mixin_overlap" && " · confirm at runtime"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {result.mods.length > 0 && (
             <div className="panel">

@@ -24,7 +24,26 @@ export interface Mod {
   mcVersion: string | null;
   environment: ModEnvironment;
   depends: Record<string, string | string[]>;
+  provides: string[];
   jar: string;
+}
+
+export type ConflictType =
+  | "tag_overlap"
+  | "recipe_collision"
+  | "mixin_overlap"
+  | "dependency"
+  | "duplicate_jar";
+export type Severity = "info" | "warning" | "error";
+
+export interface Conflict {
+  type: ConflictType;
+  severity: Severity;
+  detectedBy: "static" | "runtime";
+  members: string[];
+  // type-specific payload (tag/items, recipe, target, missing, modId/jars…)
+  detail: Record<string, unknown>;
+  resolution: Record<string, unknown> | null;
 }
 
 export interface UntestableMod {
@@ -43,6 +62,7 @@ export interface ScanCounts {
   testable: number;
   untestable: number;
   errors: number;
+  conflicts: number;
 }
 
 export interface ScanResult {
@@ -50,6 +70,7 @@ export interface ScanResult {
   modsPath: string;
   mods: Mod[];
   untestable: UntestableMod[];
+  conflicts: Conflict[];
   errors: ScanError[];
   counts: ScanCounts;
 }
