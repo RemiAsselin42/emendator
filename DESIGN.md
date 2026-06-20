@@ -1,14 +1,14 @@
 ---
 version: alpha
 name: Emendator
-description: Identité visuelle d'Emendator — contraste or / mauve, dense et utilitaire mais chaud. Destinée aux agents de code.
+description: Emendator visual identity — gold / mauve contrast, dense and utilitarian but warm. Aimed at code agents.
 colors:
-  primary: "#DEB841"      # jaune canard — pilote unique de l'interaction
-  secondary: "#DE9E36"    # orange clair — accent secondaire / état hover
-  background: "#37323E"   # gris mauve — fond global (primary-background)
-  surface: "#6D6A75"      # gris mauve clair — surface secondaire rare + couleur de bordure
-  text: "#F8F5FC"         # blanc mauve — texte sur fonds sombres
-  on-accent: "#37323E"    # texte sombre posé sur les accents or/orange (contraste AA)
+  primary: "#DEB841"      # teal gold — sole driver of interaction
+  secondary: "#DE9E36"    # light orange — secondary accent / hover state
+  background: "#37323E"   # mauve grey — global background (primary-background)
+  surface: "#6D6A75"      # light mauve grey — rare secondary surface + border color
+  text: "#F8F5FC"         # mauve white — text on dark backgrounds
+  on-accent: "#37323E"    # dark text placed on gold/orange accents (AA contrast)
 typography:
   h1:
     fontFamily: "Poltawski Nowy"
@@ -51,7 +51,7 @@ spacing:
   sm: 8px
   md: 16px
   lg: 24px
-# --- Extensions custom (hors schéma standard, tolérées par le lint) ---
+# --- Custom extensions (outside standard schema, tolerated by lint) ---
 borders:
   default: "2px solid {colors.surface}"
   dropzone: "2px dotted {colors.surface}"
@@ -100,57 +100,56 @@ components:
 
 ## Overview
 
-Emendator — « celui qui ôte les défauts ». L'interface est un **outil dense et
-utilitaire** : on y lit des listes de mods, des conflits, des verdicts de boot. Elle doit
-rester lisible et calme, jamais décorative.
+Emendator — "one who removes flaws." The interface is a **dense, utilitarian tool**: it
+displays mod lists, conflicts, and boot verdicts. It must stay readable and calm, never
+decorative.
 
-Le parti pris visuel tient en une tension : un **or chaud** (jaune canard / orange) qui
-tranche sur un **mauve sombre**. L'or est rare et précieux — il ne sert qu'à signaler
-l'interaction et l'action ; tout le reste vit dans les gris-mauves. Le résultat vise une
-ambiance sobre, à fort contraste, où l'œil va droit à ce qui est cliquable ou problématique.
+The visual approach rests on a single tension: a **warm gold** (teal gold / orange) that
+cuts against a **dark mauve**. Gold is rare and precious — used only to signal interaction
+and action; everything else lives in mauve-greys. The result aims for a sober, high-contrast
+atmosphere where the eye goes straight to what is clickable or problematic.
 
-Principe directeur : **le moins de variation possible**. Un seul fond, une seule couleur
-d'accent, un seul rayon, une seule transition. La séparation des éléments passe par la
-**bordure**, pas par l'empilement de fonds ou d'ombres.
+Guiding principle: **as little variation as possible**. One background, one accent color,
+one radius, one transition. Element separation comes from the **border**, not from stacking
+backgrounds or shadows.
 
 ## Colors
 
-Cinq rôles, plus une couleur de texte pour les accents.
+Five roles, plus one text color for accents.
 
-- **primary `#DEB841` (jaune canard)** — pilote unique de l'interaction : boutons d'action,
-  liens, focus, surbrillance d'un conflit. À utiliser avec parcimonie pour qu'il reste un signal.
-- **secondary `#DE9E36` (orange clair)** — accent secondaire et **état hover** de l'or. Sert le
-  glissement de couleur au survol (primary → secondary).
-- **background `#37323E` (gris mauve)** — fond global, présent partout.
-- **surface `#6D6A75` (gris mauve clair)** — double rôle : **couleur de bordure** par défaut, et
-  surface secondaire **rare** (ligne sélectionnée, zone active). Ne pas en faire un second fond
-  généralisé.
-- **text `#F8F5FC` (blanc mauve)** — texte courant sur les fonds sombres.
-- **on-accent `#37323E`** — texte posé **sur** l'or ou l'orange. Indispensable : du texte clair
-  sur l'or ne passe pas le contraste, du texte sombre oui.
+- **primary `#DEB841` (teal gold)** — sole driver of interaction: action buttons, links,
+  focus, conflict highlight. Use sparingly so it remains a signal.
+- **secondary `#DE9E36` (light orange)** — secondary accent and **hover state** of gold.
+  Drives the color shift on hover (primary → secondary).
+- **background `#37323E` (mauve grey)** — global background, present everywhere.
+- **surface `#6D6A75` (light mauve grey)** — dual role: default **border color**, and **rare**
+  secondary surface (selected row, active area). Do not use as a generalized second background.
+- **text `#F8F5FC` (mauve white)** — body text on dark backgrounds.
+- **on-accent `#37323E`** — text placed **on** gold or orange. Essential: light text on gold
+  fails contrast; dark text passes.
 
-Contraste (WCAG AA, seuil 4.5:1), vérifié :
+Contrast (WCAG AA, threshold 4.5:1), verified:
 
-| Paire | Ratio | Verdict |
+| Pair | Ratio | Verdict |
 | --- | --- | --- |
-| text sur background | ~12:1 | AAA |
-| text sur surface | ~4.9:1 | AA |
-| on-accent sur primary | ~6.6:1 | AA |
-| on-accent sur secondary | ~5.4:1 | AA |
+| text on background | ~12:1 | AAA |
+| text on surface | ~4.9:1 | AA |
+| on-accent on primary | ~6.6:1 | AA |
+| on-accent on secondary | ~5.4:1 | AA |
 
-> Conséquence : tout bouton or/orange porte du texte **sombre** (`on-accent`), jamais blanc.
-> Le texte blanc est réservé aux fonds sombres (background, surface).
+> Consequence: every gold/orange button carries **dark** text (`on-accent`), never white.
+> White text is reserved for dark backgrounds (background, surface).
 
 ## Typography
 
-Deux familles, variables toutes les deux.
+Two families, both variable.
 
-- **Titres — Poltawski Nowy** (serif, 400–700). Une serif au caractère affirmé pour les
-  en-têtes ; apporte la chaleur et la personnalité.
-- **Corps — League Spartan** (sans, 100–900). Géométrique et compacte, idéale pour de la
-  donnée dense et de petits libellés. **Sans capitales forcées** (voir Do's & Don'ts).
+- **Headings — Poltawski Nowy** (serif, 400–700). A serif with strong character for headers;
+  brings warmth and personality.
+- **Body — League Spartan** (sans, 100–900). Geometric and compact, ideal for dense data
+  and small labels. **No forced uppercase** (see Do's & Don'ts).
 
-Imports (Google Fonts) :
+Imports (Google Fonts):
 
 ```html
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -167,69 +166,70 @@ Imports (Google Fonts) :
 .body  { font-family: var(--font-body);  font-optical-sizing: auto; }
 ```
 
-Échelle : `h1` / `h2` / `h3` en Poltawski Nowy ; `body-md`, `body-sm`, `label`, `button` en
-League Spartan. Privilégier `body-sm` et `label` : **petit texte > grand texte**, et l'absence
-de texte (icône suffisante) est préférable à un libellé long.
+Scale: `h1` / `h2` / `h3` in Poltawski Nowy; `body-md`, `body-sm`, `label`, `button` in
+League Spartan. Prefer `body-sm` and `label`: **small text > large text**, and no text at all
+(icon sufficient) beats a long label.
 
 ## Layout
 
-Fond unique `background` partout. On **n'attribue pas un fond différent à chaque élément** :
-panneaux, listes et cartes partagent le fond et se distinguent par la **bordure** (`borders.default`,
-soit `2px solid surface`). La surface `#6D6A75` n'apparaît qu'en surface secondaire ponctuelle.
+Single `background` everywhere. **Do not assign a different background to each element**:
+panels, lists, and cards share the background and are distinguished by the **border**
+(`borders.default`, i.e. `2px solid surface`). Surface `#6D6A75` appears only as a
+punctual secondary surface.
 
-- **Espacement** : échelle `sm` 8px / `md` 16px / `lg` 24px. S'y tenir, pas de valeurs hors barème.
-- **Rayon** : `rounded.md` = 8px, **unique** rayon du système (bordures, boutons, panneaux, zones).
-- **Transition** : `motion.transition` = `all 0.3s ease`, appliquée uniformément.
+- **Spacing**: scale `sm` 8px / `md` 16px / `lg` 24px. Stick to it — no off-scale values.
+- **Radius**: `rounded.md` = 8px, the **single** radius in the system (borders, buttons, panels, zones).
+- **Transition**: `motion.transition` = `all 0.3s ease`, applied uniformly.
 
 ## Elevation & Depth
 
-Pas de profondeur par empilement. **`box-shadow` interdit.** La hiérarchie se lit par la
-bordure et, exceptionnellement, par la surface secondaire — jamais par l'ombre.
+No depth through stacking. **`box-shadow` is forbidden.** Hierarchy is read through the
+border and, exceptionally, through the secondary surface — never through shadow.
 
-Les dégradés (`linear-gradient`) sont autorisés **uniquement en fond** (jamais sur du texte, une
-bordure ou une icône).
+Gradients (`linear-gradient`) are allowed **only as backgrounds** (never on text, a border,
+or an icon).
 
 ## Shapes
 
-- **Bordure par défaut** : `2px solid {colors.surface}`, rayon `8px`. C'est l'élément structurant
-  principal de l'UI.
-- **Zone de drag-and-drop** : même bordure mais **pointillée** — `2px dotted {colors.surface}` —
-  pour signaler la cible de dépôt (le dossier `mods/`).
-- Au survol, **la taille ne bouge pas** : pas de `scale`, pas de changement d'épaisseur de bordure
-  (cela décale la mise en page). Voir hover ci-dessous.
+- **Default border**: `2px solid {colors.surface}`, radius `8px`. This is the primary
+  structural element of the UI.
+- **Drag-and-drop zone**: same border but **dotted** — `2px dotted {colors.surface}` —
+  to signal the drop target (the `mods/` folder).
+- On hover, **size does not change**: no `scale`, no border thickness change (that shifts
+  layout). See hover below.
 
 ## Components
 
-Survol : **seule la couleur change** (texte ou fond). Jamais de `scale`, jamais de bordure
-modifiée — uniquement un glissement de teinte, sur `0.3s ease`.
+Hover: **only color changes** (text or background). Never `scale`, never a modified border —
+only a hue shift, over `0.3s ease`.
 
-- **button-primary** — fond `primary`, texte `on-accent`. Au hover, le fond glisse vers
-  `secondary`. Action principale (lancer une analyse, un boot, générer un fix).
-- **button-ghost** — sur fond, texte `text` ; au hover le texte passe en `primary`. Actions
-  secondaires / discrètes.
-- **Texte dans les boutons : minimal.** Si l'affordance de l'icône suffit, **pas de libellé**.
-  Icônes en **SVG** issues de bibliothèques (jamais d'emoji).
-- **dropzone** — fond `background`, bordure pointillée `borders.dropzone`, rayon `md`. Cible de
-  dépôt du dossier de mods.
-- **row-selected** — seule occurrence courante de `surface` comme fond, pour une ligne
-  sélectionnée dans une liste de mods/conflits.
-- **link** — couleur `primary`, **souligné** ; au hover, glisse vers `secondary`. Tout `<a>` est
-  souligné.
+- **button-primary** — background `primary`, text `on-accent`. On hover, background shifts to
+  `secondary`. Primary action (run analysis, boot, generate fix).
+- **button-ghost** — on background, text `text`; on hover text shifts to `primary`. Secondary /
+  low-profile actions.
+- **Button text: minimal.** If the icon's affordance is sufficient, **no label**. Icons as
+  **SVG** from libraries (never emoji).
+- **dropzone** — background `background`, dotted border `borders.dropzone`, radius `md`. Drop
+  target for the mods folder.
+- **row-selected** — the common case where `surface` is used as a background, for a selected
+  row in a mod/conflict list.
+- **link** — color `primary`, **underlined**; on hover, shifts to `secondary`. Every `<a>` is
+  underlined.
 
 ## Do's and Don'ts
 
-**À faire**
-- Réserver l'or (`primary`) au signal d'interaction ; laisser le reste en gris-mauve.
-- Séparer les éléments par la **bordure**, garder un fond unique.
-- Texte **sombre** (`on-accent`) sur les accents or/orange.
-- Icônes **SVG** de bibliothèques ; libellés de bouton courts ou absents.
-- Préférer **petit texte**, voire **pas de texte**, à un libellé long.
-- Souligner tous les liens `<a>`.
+**Do**
+- Reserve gold (`primary`) for interaction signals; leave everything else in mauve-grey.
+- Separate elements with **borders**, keep a single background.
+- **Dark** text (`on-accent`) on gold/orange accents.
+- **SVG** icons from libraries; button labels short or absent.
+- Prefer **small text**, or **no text at all**, over a long label.
+- Underline all `<a>` links.
 
-**À ne pas faire**
-- `box-shadow` (aucune ombre).
-- `linear-gradient` ailleurs qu'en **fond**.
-- `text-transform` (pas de capitales forcées).
-- Changement de **taille** au survol (`scale`) ou de **bordure** au survol.
-- **Emoji** dans l'UI.
-- Multiplier les fonds par élément, ou les rayons / transitions différents.
+**Don't**
+- `box-shadow` (no shadows).
+- `linear-gradient` anywhere other than **backgrounds**.
+- `text-transform` (no forced uppercase).
+- Change **size** on hover (`scale`) or **border** on hover.
+- **Emoji** in the UI.
+- Stack multiple backgrounds per element, or use different radii / transitions.
