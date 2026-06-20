@@ -8,9 +8,8 @@
 
 ---
 
-> **Note** — This is a portfolio / showcase project, built in public. It is under active
-> development; see the [roadmap](#roadmap) for what is shippable today. The internal design
-> brief lives in [`PROJECT.md`](./PROJECT.md) (French).
+> **Note** — Built in public and under active development; see the [roadmap](#roadmap) for what
+> is shippable today. The internal design brief lives in [`PROJECT.md`](./PROJECT.md) (French).
 
 ## The problem
 

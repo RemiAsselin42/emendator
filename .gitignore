@@ -58,5 +58,11 @@ crash-reports/
 mixin-export/
 
 # ---- Tooling / local meta (per global config; not part of the project) ----
-graphify-out/
 .mempalace/
+# Graphify — locally generated artifacts
+graphify-out/
+
+# Claude Code — local unversioned config
+CLAUDE.md
+mempalace.yaml
+context/
