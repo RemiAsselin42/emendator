@@ -31,6 +31,12 @@ RUN curl -fsSL \
 # later `--network none` boot needs no network.
 RUN printf 'stop\n' | timeout 240 java -jar server.jar nogui || true
 
+# Drop the warm run's runtime state (logs/world/crash-reports) so a real boot
+# starts clean and writes a fresh latest.log — keeping it would make the runner
+# read a stale "Done" from the baked log.
+RUN rm -rf logs crash-reports world world_nether world_the_end usercache.json \
+    usernamecache.json .console_history 2>/dev/null || true
+
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
