@@ -38,7 +38,7 @@ def is_docker_available() -> bool:
 
 
 def build_run_args(
-    container: str, workdir: Path, request: RunRequest, profile: VersionProfile
+    container: str, workdir: Path, memory: str, profile: VersionProfile
 ) -> list[str]:
     """Assemble the ``docker run`` argv (pure, so it is unit-tested directly)."""
     return [
@@ -48,7 +48,7 @@ def build_run_args(
         "--name",
         container,
         "--memory",
-        request.memory,
+        memory,
         "--pids-limit",
         "512",
         "-e",
@@ -58,7 +58,7 @@ def build_run_args(
         "-e",
         f"VERSION={profile.profile}",
         "-e",
-        f"MEMORY={request.memory}",
+        f"MEMORY={memory}",
         "-e",
         f"JVM_OPTS={_MIXIN_FLAGS}",
         "-v",
@@ -67,12 +67,18 @@ def build_run_args(
     ]
 
 
-def run_set(request: RunRequest, profile: VersionProfile) -> RunVerdict:
-    """Boot ``request.path`` as a set and return the classified verdict."""
+def boot_jars(
+    jar_paths: list[Path],
+    profile: VersionProfile,
+    timeout_seconds: int = 300,
+    memory: str = "3G",
+) -> RunVerdict:
+    """Boot exactly ``jar_paths`` in a throwaway container and classify the log.
+
+    This is the unit of work the bisector drives over subsets; ``run_set`` is a
+    thin wrapper that boots a whole folder.
+    """
     start = time.monotonic()
-    folder = Path(request.path)
-    if not folder.is_dir():
-        return _error(profile, start, f"Not a directory: {request.path}")
     if not is_docker_available():
         return _error(profile, start, "Docker is not available — start Docker Desktop and retry.")
 
@@ -81,11 +87,11 @@ def run_set(request: RunRequest, profile: VersionProfile) -> RunVerdict:
     try:
         mods_dir = workdir / "mods"
         mods_dir.mkdir()
-        for jar in folder.glob("*.jar"):
+        for jar in jar_paths:
             shutil.copy2(jar, mods_dir / jar.name)
 
         launched = subprocess.run(
-            build_run_args(container, workdir, request, profile),
+            build_run_args(container, workdir, memory, profile),
             capture_output=True,
             text=True,
             timeout=_DOCKER_CALL_TIMEOUT,
@@ -93,7 +99,7 @@ def run_set(request: RunRequest, profile: VersionProfile) -> RunVerdict:
         if launched.returncode != 0:
             return _error(profile, start, "docker run failed", excerpt=launched.stderr.strip())
 
-        outcome, _exit_code = _wait_for_boot(container, workdir, request.timeout_seconds)
+        outcome, _exit_code = _wait_for_boot(container, workdir, timeout_seconds)
         log_text = _read_log(workdir)
         crash = _read_crash_report(workdir)
         status, cause = _decide(outcome, log_text, crash)
@@ -108,6 +114,14 @@ def run_set(request: RunRequest, profile: VersionProfile) -> RunVerdict:
     finally:
         subprocess.run(["docker", "rm", "-f", container], capture_output=True)
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def run_set(request: RunRequest, profile: VersionProfile) -> RunVerdict:
+    """Boot ``request.path`` as a whole set and return the classified verdict."""
+    folder = Path(request.path)
+    if not folder.is_dir():
+        return _error(profile, time.monotonic(), f"Not a directory: {request.path}")
+    return boot_jars(sorted(folder.glob("*.jar")), profile, request.timeout_seconds, request.memory)
 
 
 def _wait_for_boot(container: str, workdir: Path, timeout: int) -> tuple[str, int]:

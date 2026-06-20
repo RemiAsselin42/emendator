@@ -1,5 +1,5 @@
 // Pure helpers for presenting the conflict map (PROJECT.md §9).
-import type { Conflict, RunVerdict, Severity } from "./api";
+import type { Conflict, Severity } from "./api";
 
 export const CONFLICT_LABEL: Record<Conflict["type"], string> = {
   duplicate_jar: "duplicate jar",
@@ -37,10 +37,10 @@ export function countBySeverity(conflicts: Conflict[]): Record<Severity, number>
 // A mixin_overlap candidate is confirmed when the loader actually transformed
 // its target class (present in the runtime mixin export). This is the static →
 // runtime link the analyzer promises (§7).
-export function isRuntimeConfirmed(conflict: Conflict, verdict: RunVerdict | null): boolean {
-  if (!verdict || conflict.type !== "mixin_overlap") return false;
+export function isRuntimeConfirmed(conflict: Conflict, mixinExports: Set<string> | null): boolean {
+  if (!mixinExports || conflict.type !== "mixin_overlap") return false;
   const target = conflict.detail.target;
-  return typeof target === "string" && verdict.mixinExports.includes(target);
+  return typeof target === "string" && mixinExports.has(target);
 }
 
 // Stable React key for a conflict row.
