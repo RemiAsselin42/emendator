@@ -207,6 +207,103 @@ a:hover {
   margin-bottom: var(--space-md);
 }
 
+/* Tab navigation — active tab carries a gold underline (interaction signal). */
+.tabs {
+  display: flex;
+  gap: var(--space-lg);
+  border-bottom: var(--border);
+}
+
+.tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  padding: var(--space-sm) 0;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.tab:hover {
+  color: var(--color-primary);
+}
+
+.tab-active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* A view's vertical rhythm. */
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+/* Overview stat cards. Numbers stay neutral; gold is reserved for action. */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-md);
+}
+
+.stat {
+  border: var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.stat-n {
+  font-family: var(--font-title);
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.stat-l {
+  font-size: 0.8125rem;
+  opacity: 0.8;
+}
+
+/* Severity filter chips. Active chip = gold border + its severity color. */
+.filters {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.chip {
+  background: none;
+  border: var(--border);
+  border-radius: var(--radius);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.chip:hover {
+  color: var(--color-primary);
+}
+
+.chip-on {
+  border-color: var(--color-primary);
+}
+
+/* Static mixin candidate confirmed by the runtime export (§7 link). */
+.confirmed {
+  color: var(--color-primary);
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
 .conflicts-table {
   width: 100%;
   border-collapse: collapse;

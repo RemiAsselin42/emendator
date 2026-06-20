@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  type Conflict,
   fetchHealth,
   type HealthResponse,
   type RunVerdict,
@@ -8,31 +7,16 @@ import {
   scanMods,
   testSet,
 } from "./lib/api";
+import { ConflictsView, ModsView, Overview, RuntimeView } from "./views";
 
-const CONFLICT_LABEL: Record<Conflict["type"], string> = {
-  duplicate_jar: "duplicate jar",
-  dependency: "dependency",
-  tag_overlap: "tag overlap",
-  recipe_collision: "recipe collision",
-  mixin_overlap: "mixin overlap",
-};
+type Tab = "overview" | "conflicts" | "mods" | "runtime";
 
-// One-line subject for a conflict row, by type.
-function conflictSubject(c: Conflict): string {
-  const d = c.detail;
-  switch (c.type) {
-    case "duplicate_jar":
-      return String(d.modId ?? "");
-    case "dependency":
-      return `missing ${String(d.missing ?? "")}`;
-    case "tag_overlap":
-      return String(d.tag ?? "");
-    case "recipe_collision":
-      return String(d.recipe ?? "");
-    case "mixin_overlap":
-      return String(d.target ?? "");
-  }
-}
+const TABS: { id: Tab; label: string }[] = [
+  { id: "overview", label: "Overview" },
+  { id: "conflicts", label: "Conflicts" },
+  { id: "mods", label: "Mods" },
+  { id: "runtime", label: "Runtime" },
+];
 
 export default function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -43,6 +27,7 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [verdict, setVerdict] = useState<RunVerdict | null>(null);
   const [testing, setTesting] = useState(false);
+  const [tab, setTab] = useState<Tab>("overview");
 
   useEffect(() => {
     fetchHealth()
@@ -58,6 +43,7 @@ export default function App() {
     setVerdict(null);
     try {
       setResult(await scanMods(trimmed));
+      setTab("overview");
     } catch (e) {
       setScanError(e instanceof Error ? e.message : String(e));
       setResult(null);
@@ -120,6 +106,10 @@ export default function App() {
     return () => unlisten?.();
   }, [runScan]);
 
+  const onTest = useCallback(() => {
+    if (result) void runTest(result.modsPath);
+  }, [result, runTest]);
+
   return (
     <main className="container">
       <header className="header">
@@ -167,139 +157,27 @@ export default function App() {
 
       {result && (
         <>
-          <div className="summary">
-            <span>
-              <span className="count">{result.counts.mods}</span> mods
-            </span>
-            <span className="untestable">
-              <span className="count">{result.counts.untestable}</span> not testable in server mode
-            </span>
-            <span>
-              <span className="count">{result.counts.conflicts}</span> conflicts
-            </span>
-            {result.counts.errors > 0 && (
-              <span>
-                <span className="count">{result.counts.errors}</span> unreadable jars
-              </span>
-            )}
-          </div>
+          <nav className="tabs">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={tab === t.id ? "tab tab-active" : "tab"}
+                onClick={() => setTab(t.id)}
+              >
+                {t.label}
+                {t.id === "conflicts" && ` (${result.counts.conflicts})`}
+                {t.id === "mods" && ` (${result.counts.mods})`}
+              </button>
+            ))}
+          </nav>
 
-          <section className="runner">
-            <button
-              className="btn-primary"
-              type="button"
-              onClick={() => void runTest(result.modsPath)}
-              disabled={testing}
-            >
-              {testing ? "booting…" : "Test this set (headless boot)"}
-            </button>
-            {testing && (
-              <span className="note"> a real boot takes minutes; needs Docker running</span>
-            )}
-          </section>
-
-          {verdict && (
-            <div className="panel">
-              <h2 className="panel-title">Runtime verdict</h2>
-              <p>
-                <span className={`run-${verdict.status}`}>{verdict.status.toUpperCase()}</span>
-                {" · "}
-                {(verdict.durationMs / 1000).toFixed(1)}s
-                {verdict.mixinExports.length > 0 &&
-                  ` · ${verdict.mixinExports.length} mixin-transformed classes (ground truth)`}
-              </p>
-              {verdict.cause && (
-                <>
-                  <p className="note">
-                    {verdict.cause.category}: {verdict.cause.summary}
-                    {verdict.cause.mods.length > 0 && ` — ${verdict.cause.mods.join(", ")}`}
-                  </p>
-                  {verdict.cause.excerpt && <pre className="log">{verdict.cause.excerpt}</pre>}
-                </>
-              )}
-              {verdict.logTail && verdict.status !== "error" && (
-                <details>
-                  <summary>log tail</summary>
-                  <pre className="log">{verdict.logTail}</pre>
-                </details>
-              )}
-            </div>
+          {tab === "overview" && (
+            <Overview result={result} verdict={verdict} onTest={onTest} testing={testing} />
           )}
-
-          {result.conflicts.length > 0 && (
-            <div className="panel">
-              <h2 className="panel-title">Conflicts</h2>
-              <table className="conflicts-table">
-                <thead>
-                  <tr>
-                    <th>severity</th>
-                    <th>type</th>
-                    <th>subject</th>
-                    <th>mods</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.conflicts.map((c) => (
-                    <tr key={`${c.type}-${conflictSubject(c)}-${c.members.join(",")}`}>
-                      <td className={`sev-${c.severity}`}>{c.severity}</td>
-                      <td>{CONFLICT_LABEL[c.type]}</td>
-                      <td className="subject">{conflictSubject(c)}</td>
-                      <td className="members">
-                        {c.members.join(", ")}
-                        {c.type === "mixin_overlap" && " · confirm at runtime"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {result.mods.length > 0 && (
-            <div className="panel">
-              <table className="mods-table">
-                <thead>
-                  <tr>
-                    <th>id</th>
-                    <th>version</th>
-                    <th>mc</th>
-                    <th>env</th>
-                    <th>jar</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.mods.map((mod) => (
-                    <tr key={mod.jar}>
-                      <td>{mod.id}</td>
-                      <td>{mod.version ?? "—"}</td>
-                      <td>{mod.mcVersion ?? "—"}</td>
-                      <td className={mod.environment === "client" ? "env-client" : undefined}>
-                        {mod.environment}
-                      </td>
-                      <td>{mod.jar}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {result.counts.untestable > 0 && (
-            <p className="note">
-              {result.counts.untestable} client-only mod(s) are not loaded by a headless server and
-              cannot be tested at runtime (see PROJECT.md §5).
-            </p>
-          )}
-
-          {result.errors.length > 0 && (
-            <ul className="errors">
-              {result.errors.map((err) => (
-                <li key={err.jar}>
-                  {err.jar}: {err.reason}
-                </li>
-              ))}
-            </ul>
-          )}
+          {tab === "conflicts" && <ConflictsView conflicts={result.conflicts} verdict={verdict} />}
+          {tab === "mods" && <ModsView result={result} />}
+          {tab === "runtime" && <RuntimeView verdict={verdict} onTest={onTest} testing={testing} />}
         </>
       )}
     </main>
