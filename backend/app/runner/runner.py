@@ -27,6 +27,12 @@ _IMAGE = "itzg/minecraft-server"
 _MIXIN_FLAGS = "-Dmixin.debug.export=true -Dmixin.debug.verbose=true -Dmixin.checks=true"
 _POLL_SECONDS = 3.0
 _DOCKER_CALL_TIMEOUT = 30
+# Running mods = arbitrary code (§8). Drop every Linux capability and re-add only
+# what the itzg entrypoint needs to fix permissions and drop to its unprivileged
+# user. Combined with no-new-privileges, --pids-limit and --memory, this confines
+# the boot well short of host access. Full network isolation (--network none)
+# additionally needs a pre-baked offline image (see docker/Dockerfile.offline).
+_KEEP_CAPS = ("CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID", "KILL")
 
 
 def is_docker_available() -> bool:
@@ -38,9 +44,20 @@ def is_docker_available() -> bool:
 
 
 def build_run_args(
-    container: str, workdir: Path, memory: str, profile: VersionProfile
+    container: str,
+    workdir: Path,
+    memory: str,
+    profile: VersionProfile,
+    network: str = "bridge",
 ) -> list[str]:
-    """Assemble the ``docker run`` argv (pure, so it is unit-tested directly)."""
+    """Assemble the ``docker run`` argv (pure, so it is unit-tested directly).
+
+    ``network`` defaults to ``bridge`` because the itzg image downloads the
+    Fabric server on first boot; pass ``none`` only with the offline image.
+    """
+    cap_args: list[str] = []
+    for capability in _KEEP_CAPS:
+        cap_args += ["--cap-add", capability]
     return [
         "docker",
         "run",
@@ -51,6 +68,13 @@ def build_run_args(
         memory,
         "--pids-limit",
         "512",
+        "--cap-drop",
+        "ALL",
+        *cap_args,
+        "--security-opt",
+        "no-new-privileges",
+        "--network",
+        network,
         "-e",
         "EULA=TRUE",
         "-e",
@@ -72,6 +96,7 @@ def boot_jars(
     profile: VersionProfile,
     timeout_seconds: int = 300,
     memory: str = "3G",
+    network: str = "bridge",
 ) -> RunVerdict:
     """Boot exactly ``jar_paths`` in a throwaway container and classify the log.
 
@@ -91,7 +116,7 @@ def boot_jars(
             shutil.copy2(jar, mods_dir / jar.name)
 
         launched = subprocess.run(
-            build_run_args(container, workdir, memory, profile),
+            build_run_args(container, workdir, memory, profile, network),
             capture_output=True,
             text=True,
             timeout=_DOCKER_CALL_TIMEOUT,
