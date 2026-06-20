@@ -177,33 +177,32 @@ a:hover {
   gap: var(--space-sm);
 }
 
-/* Always-available manual version override under the scan form. */
-.version-override {
+/* Persistent Minecraft-version bar under the header: selector auto-set to the
+   detected version, re-scans on change. */
+.version-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+  font-size: 1rem;
+  color: var(--color-text);
+}
+
+.mc-version {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  margin-top: var(--space-md);
-  font-size: 1rem;
-  color: var(--color-text);
 }
 
-.version-override select {
+.mc-version select {
   padding: var(--space-sm);
   background: var(--color-background);
-  color: var(--color-text);
+  color: var(--color-primary);
   border: var(--border);
   border-radius: var(--radius);
   font-family: var(--font-body);
-}
-
-/* Detected Minecraft version line at the top of the Overview. */
-.detected {
   font-size: 1rem;
-  color: var(--color-text);
-}
-
-.detected strong {
-  color: var(--color-primary);
 }
 
 /* Result summary line. */

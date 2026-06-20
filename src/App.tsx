@@ -51,7 +51,7 @@ export default function App() {
       .then(setHealth)
       .catch(() => setHealth(null));
     listProfiles()
-      .then(setProfiles)
+      .then((p) => setProfiles(Array.isArray(p) ? p : []))
       .catch(() => setProfiles([]));
   }, []);
 
@@ -171,6 +171,18 @@ export default function App() {
     if (result) void runBisect(result.modsPath);
   }, [result, runBisect]);
 
+  // Options for the version selector: every block's representative plus the
+  // exact detected/used version (which may sit between reps, e.g. 1.21.4),
+  // deduped. `version` drives the selection, so the detected one shows selected.
+  const versionOptions = profiles.map((p) => ({
+    value: p.version,
+    label: `${p.version} · ${p.block}`,
+  }));
+  if (version && !versionOptions.some((o) => o.value === version)) {
+    const block = result?.detection?.block;
+    versionOptions.unshift({ value: version, label: block ? `${version} · ${block}` : version });
+  }
+
   return (
     <main className="container">
       <header className="header">
@@ -178,12 +190,40 @@ export default function App() {
         <p className="tagline">Fabric modpack conflict analyzer</p>
         <p className="health">
           {health ? (
-            <span className="up">backend up · profile {health.profile}</span>
+            <span className="up">backend up</span>
           ) : (
             <span className="down">backend unreachable — start the sidecar</span>
           )}
         </p>
       </header>
+
+      {result && (
+        <div className="version-bar">
+          <label className="mc-version">
+            Minecraft version
+            <select
+              value={version ?? ""}
+              disabled={scanning}
+              onChange={(e) => {
+                const pick = e.target.value;
+                if (pick) void runScan(result.modsPath, pick);
+              }}
+            >
+              {versionOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {result.detection && (
+            <span className="note">
+              {result.detection.status === "confident" ? "auto-detected" : "selected"}
+              {!result.detection.runnerSupported && " · runtime not yet available"}
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="layout">
         <nav className="sidebar" aria-label="panels">
@@ -230,26 +270,6 @@ export default function App() {
                   {scanning ? "scanning…" : "Scan"}
                 </button>
               </form>
-              {profiles.length > 0 && (
-                <label className="version-override">
-                  target version
-                  <select
-                    value={result ? (version ?? "") : ""}
-                    disabled={scanning || !path.trim()}
-                    onChange={(e) => {
-                      const pick = e.target.value;
-                      if (path.trim()) void runScan(path, pick || undefined);
-                    }}
-                  >
-                    <option value="">auto-detect</option>
-                    {profiles.map((p) => (
-                      <option key={p.block} value={p.version}>
-                        {p.block} ({p.version})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
             </section>
           )}
 
