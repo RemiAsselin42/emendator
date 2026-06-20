@@ -192,6 +192,26 @@ def test_stray_newer_mod_does_not_hijack_the_pack() -> None:
     assert det.outliers == ["stray"]
 
 
+def test_same_block_patch_differences_stay_confident() -> None:
+    # A real 1.19.2 pack: most mods open/loose, a long tail pins narrower or older
+    # patches ("1.19", "=1.19.0", "=1.19.1"). Those are the same block, so the
+    # pack stays a confident 1.19.2 — they are not counted as outliers.
+    mods = [
+        ("a", ">=1.19.2"),
+        ("b", "1.19.x"),
+        ("c", "~1.19"),
+        ("d", "1.19"),  # bare 1.19 == exact 1.19.0
+        ("e", "=1.19.0"),
+        ("f", "=1.19.1"),
+        ("g", "<=1.19.2"),
+    ]
+    det = detect_version(mods)
+    assert det.detected_version == "1.19.2"
+    assert det.block == "1.18–1.20.4"
+    assert det.status == "confident"
+    assert det.outliers == []
+
+
 def test_or_pipe_constraint() -> None:
     c = parse_constraint("1.20.1 || >=1.21")
     assert c.contains(McVersion.parse("1.20.1"))
