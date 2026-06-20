@@ -19,9 +19,8 @@ gh api -X PUT repos/RemiAsselin42/emendator/vulnerability-alerts
 
 ## Branch protection on `main` — DONE (2026-06-20)
 
-Requires a PR + green CI before merging. The **Rust** job is intentionally NOT a
-required check yet (not verified to pass until the toolchain is installed). Promote
-it once it goes green — re-run the command below with the Rust line uncommented.
+Requires a PR + green CI before merging. All four CI jobs are required (Rust was
+promoted once verified green).
 
 ```bash
 gh api -X PUT repos/RemiAsselin42/emendator/branches/main/protection \
@@ -32,8 +31,8 @@ gh api -X PUT repos/RemiAsselin42/emendator/branches/main/protection \
     "checks": [
       { "context": "Frontend (lint · types · test · build)" },
       { "context": "Backend (ruff · pyright · pytest)" },
-      { "context": "Duplication (fallow · jscpd)" }
-      // , { "context": "Rust (fmt · clippy)" }   // add once green
+      { "context": "Duplication (fallow · jscpd)" },
+      { "context": "Rust (fmt · clippy)" }
     ]
   },
   "enforce_admins": false,
