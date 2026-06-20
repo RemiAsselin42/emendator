@@ -5,7 +5,7 @@ description: Emendator visual identity — gold / mauve contrast, dense and util
 colors:
   primary: "#DEB841"      # teal gold — sole driver of interaction
   secondary: "#DE9E36"    # light orange — secondary accent / hover state
-  background: "#37323E"   # mauve grey — global background (primary-background)
+  background: "#181719"   # mauve grey — global background (primary-background)
   surface: "#6D6A75"      # light mauve grey — rare secondary surface + border color
   text: "#F8F5FC"         # mauve white — text on dark backgrounds
   on-accent: "#37323E"    # dark text placed on gold/orange accents (AA contrast)
@@ -32,17 +32,17 @@ typography:
     lineHeight: 1.5
   body-sm:
     fontFamily: "League Spartan"
-    fontSize: 0.875rem
+    fontSize: 1rem        # floored at 16px (RGAA) — was 0.875rem
     fontWeight: 400
     lineHeight: 1.45
   label:
     fontFamily: "League Spartan"
-    fontSize: 0.8125rem
+    fontSize: 1rem        # floored at 16px (RGAA) — was 0.8125rem
     fontWeight: 500
     lineHeight: 1.2
   button:
     fontFamily: "League Spartan"
-    fontSize: 0.875rem
+    fontSize: 1rem        # floored at 16px (RGAA) — was 0.875rem
     fontWeight: 600
     lineHeight: 1
 rounded:
@@ -167,8 +167,16 @@ Imports (Google Fonts):
 ```
 
 Scale: `h1` / `h2` / `h3` in Poltawski Nowy; `body-md`, `body-sm`, `label`, `button` in
-League Spartan. Prefer `body-sm` and `label`: **small text > large text**, and no text at all
-(icon sufficient) beats a long label.
+League Spartan. Prefer compact tokens (`body-sm`, `label`) and no text at all (icon
+sufficient) over long labels — but never below the 16px floor (see below).
+
+### Minimum text size (RGAA)
+
+Every piece of text in the UI must render at **16px (`1rem`) minimum** — an RGAA
+accessibility requirement. **No `font-size` below `1rem` anywhere**: labels, table cells,
+chips, notes, log output, captions — all floored at 16px. The `body-sm`, `label`, and
+`button` tokens are therefore pinned to `1rem`; differentiate "small" text by **weight and
+opacity**, never by shrinking it below the floor.
 
 ## Layout
 
@@ -223,7 +231,8 @@ only a hue shift, over `0.3s ease`.
 - Separate elements with **borders**, keep a single background.
 - **Dark** text (`on-accent`) on gold/orange accents.
 - **SVG** icons from libraries; button labels short or absent.
-- Prefer **small text**, or **no text at all**, over a long label.
+- Prefer **compact text** (weight/opacity), or **no text at all**, over a long label.
+- Never render text **below 16px (`1rem`)** — RGAA floor, no exceptions.
 - Underline all `<a>` links.
 
 **Don't**
