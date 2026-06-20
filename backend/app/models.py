@@ -168,3 +168,45 @@ class BisectResult(CamelModel):
     boots: int = 0
     duration_ms: int = 0
     note: str | None = None
+
+
+# --- Phase 4: no-code resolution (PROJECT.md §10, §12) -------------------
+
+
+class GeneratedFile(CamelModel):
+    """A single artifact to preview or write (relative path + text content)."""
+
+    path: str
+    content: str
+
+
+class ResolutionPlan(CamelModel):
+    """The set of config/datapack files that resolve the resolvable conflicts."""
+
+    profile: str
+    files: list[GeneratedFile] = []
+    summary: str
+    # The mod priority order used for unification (first wins); editable.
+    mod_priorities: list[str] = []
+
+
+class ResolveRequest(CamelModel):
+    """Body of ``POST /resolve/preview``: the scanned ``mods/`` folder."""
+
+    path: str
+    mod_priorities: list[str] | None = None
+
+
+class ExportRequest(CamelModel):
+    """Body of ``POST /resolve/export``: where to write the generated files."""
+
+    path: str
+    out_dir: str
+    mod_priorities: list[str] | None = None
+
+
+class ExportResult(CamelModel):
+    """Absolute paths written by an export."""
+
+    out_dir: str
+    written: list[str] = []

@@ -5,8 +5,19 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.analyzer.mods import scan_mods_folder
 from app.config import settings
-from app.models import BisectResult, RunRequest, RunVerdict, ScanRequest, ScanResult
+from app.models import (
+    BisectResult,
+    ExportRequest,
+    ExportResult,
+    ResolutionPlan,
+    ResolveRequest,
+    RunRequest,
+    RunVerdict,
+    ScanRequest,
+    ScanResult,
+)
 from app.profile import get_profile
+from app.resolve.generate import build_resolution_plan, export_plan
 from app.runner.bisect import bisect_set
 from app.runner.runner import run_set
 
@@ -20,6 +31,16 @@ app.add_middleware(
 )
 
 
+def _require_dir(path: str) -> Path:
+    """Resolve a request path to an existing directory or raise HTTP 400."""
+    folder = Path(path)
+    if not folder.exists():
+        raise HTTPException(status_code=400, detail=f"Path does not exist: {path}")
+    if not folder.is_dir():
+        raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+    return folder
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """Liveness probe consumed by the front to confirm the sidecar is up."""
@@ -29,12 +50,7 @@ def health() -> dict[str, str]:
 @app.post("/mods/scan", response_model=ScanResult)
 def scan_mods(req: ScanRequest) -> ScanResult:
     """Ingest a local ``mods/`` folder into the conflict map (Phase 0 slice)."""
-    folder = Path(req.path)
-    if not folder.exists():
-        raise HTTPException(status_code=400, detail=f"Path does not exist: {req.path}")
-    if not folder.is_dir():
-        raise HTTPException(status_code=400, detail=f"Not a directory: {req.path}")
-    return scan_mods_folder(folder, settings.profile)
+    return scan_mods_folder(_require_dir(req.path), settings.profile)
 
 
 @app.post("/runner/test", response_model=RunVerdict)
@@ -44,11 +60,7 @@ def runner_test(req: RunRequest) -> RunVerdict:
     Long-running: a real boot takes minutes. A missing Docker daemon yields a
     verdict with ``status: error`` rather than an HTTP error.
     """
-    folder = Path(req.path)
-    if not folder.exists():
-        raise HTTPException(status_code=400, detail=f"Path does not exist: {req.path}")
-    if not folder.is_dir():
-        raise HTTPException(status_code=400, detail=f"Not a directory: {req.path}")
+    _require_dir(req.path)
     return run_set(req, get_profile(settings.profile))
 
 
@@ -59,9 +71,22 @@ def runner_bisect(req: RunRequest) -> BisectResult:
     Long-running: each step is a real boot (~log2(N) of them). Returns the
     minimal reproducing set, or ``no_conflict`` if the full set boots cleanly.
     """
-    folder = Path(req.path)
-    if not folder.exists():
-        raise HTTPException(status_code=400, detail=f"Path does not exist: {req.path}")
-    if not folder.is_dir():
-        raise HTTPException(status_code=400, detail=f"Not a directory: {req.path}")
+    _require_dir(req.path)
     return bisect_set(req, get_profile(settings.profile))
+
+
+@app.post("/resolve/preview", response_model=ResolutionPlan)
+def resolve_preview(req: ResolveRequest) -> ResolutionPlan:
+    """Generate the no-code resolution artifacts for a scanned folder (§10)."""
+    scan = scan_mods_folder(_require_dir(req.path), settings.profile)
+    return build_resolution_plan(get_profile(settings.profile), scan.conflicts, req.mod_priorities)
+
+
+@app.post("/resolve/export", response_model=ExportResult)
+def resolve_export(req: ExportRequest) -> ExportResult:
+    """Write the generated resolution files under ``out_dir``."""
+    scan = scan_mods_folder(_require_dir(req.path), settings.profile)
+    plan = build_resolution_plan(get_profile(settings.profile), scan.conflicts, req.mod_priorities)
+    out_dir = Path(req.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return ExportResult(out_dir=str(out_dir), written=export_plan(plan, out_dir))

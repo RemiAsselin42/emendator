@@ -23,6 +23,7 @@ class VersionProfile(CamelModel):
     tag_path: str
     tag_namespace: str
     fabric_api: str
+    datapack_format: int  # pack_format for generated datapacks (1.21–1.21.1 = 48)
 
     def recipe_glob(self) -> str:
         """Glob (relative to a jar root) matching every recipe JSON."""
@@ -44,6 +45,7 @@ _PROFILES: dict[str, VersionProfile] = {
         tag_path="data/{mod}/tags/items",
         tag_namespace="c",
         fabric_api="0.116.11+1.21.1",
+        datapack_format=48,
     ),
 }
 
