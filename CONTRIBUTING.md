@@ -59,6 +59,30 @@ pnpm dev                                                   # front only, http://
 cd backend && uv run uvicorn app.main:app --reload --port 8008
 ```
 
+## Sidecar (bundled backend)
+
+In **release** builds the Tauri shell auto-spawns the backend as a bundled
+sidecar binary, so end users never start it by hand. In **dev** the shell does
+not spawn it (run the backend manually, as above).
+
+Tauri declares the sidecar via `externalBin`, so the binary
+`src-tauri/binaries/emendator-backend-<target-triple>[.exe]` **must exist for
+any `cargo`/`tauri` build** (even dev) — otherwise the build script errors with
+"resource path ... doesn't exist".
+
+```bash
+# Build the real sidecar (PyInstaller) and place it for the current platform:
+./scripts/build-sidecar.sh
+
+# For `tauri dev` you only need the file to exist (the dev backend is run
+# manually), so a stub is enough:
+mkdir -p src-tauri/binaries
+touch "src-tauri/binaries/emendator-backend-$(rustc -vV | sed -n 's/host: //p')"
+```
+
+The release workflow builds the real sidecar before bundling; CI's Rust job
+stubs it (fmt/clippy don't need a functional binary).
+
 ## Quality gates (mirror CI)
 
 ```bash
