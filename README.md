@@ -9,7 +9,7 @@
 ---
 
 > **Note** — Built in public and under active development; see the [roadmap](#roadmap) for what
-> is shippable today. The internal design brief lives in [`PROJECT.md`](./PROJECT.md) (French).
+> is shippable today. The internal design brief lives in [`PROJECT.md`](./PROJECT.md).
 
 ## The problem
 

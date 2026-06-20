@@ -1,184 +1,182 @@
-# Emendator — Fabric Conflict Analyzer (Brief projet MVP)
+# Emendator — Fabric Conflict Analyzer (MVP project brief)
 
-> Document de contexte destiné à Claude Code. Il définit le problème, les partis pris
-> d'architecture, les murs connus et le découpage MVP. À traiter comme source de vérité :
-> chaque phase est livrable indépendamment et construit sur la précédente.
+> Context document for Claude Code. It defines the problem, the architectural bets, the known
+> walls and the MVP breakdown. To be treated as the source of truth: each phase is shippable
+> independently and builds on the previous one.
 >
-> **Nom du projet : Emendator** — du latin _emendator_, « celui qui ôte les défauts »
-> (_emendare_ : retirer les tares). L'app détecte et résout les conflits d'un modpack Fabric.
+> **Project name: Emendator** — from Latin _emendator_, "the one who removes flaws"
+> (_emendare_: to remove defects). The app detects and resolves conflicts in a Fabric modpack.
 
 ---
 
-## 1. Problème
+## 1. Problem
 
-Monter de gros modpacks Fabric (200–400 mods) provoque des conflits difficiles à diagnostiquer.
-Depuis la 1.13, les registres sont namespacés (`modid:item`) : les collisions d'**IDs numériques**
-historiques ont disparu. Les conflits restants sont d'une autre nature :
+Building large Fabric modpacks (200–400 mods) produces conflicts that are hard to diagnose.
+Since 1.13, registries are namespaced (`modid:item`): the historical **numeric ID** collisions
+are gone. The remaining conflicts are of a different nature:
 
-- **Duplication de contenu** : plusieurs mods ajoutent la même ressource (cuivre, étain…).
-- **Conflits de recettes** : recettes de craft qui se chevauchent sur la même grille.
-- **Conflits de mixins** : deux mods patchent la même méthode vanilla de façon incompatible
-  (échec d'application = crash au chargement). C'est le cas le plus pénible.
-- **Dépendances / versions** : incompatibilités, jars en double.
+- **Content duplication**: several mods add the same resource (copper, tin…).
+- **Recipe conflicts**: crafting recipes overlapping on the same grid.
+- **Mixin conflicts**: two mods patch the same vanilla method incompatibly
+  (failed application = crash on load). This is the most painful case.
+- **Dependencies / versions**: incompatibilities, duplicate jars.
 
-L'outillage existant est **fragmenté et réactif** (post-crash) : Almost Unified (unification de
-contenu), YARCF (recettes), Crash Assistant / MCDoctor.ai (analyse de log après crash), launchers
-no-code pour _installer_. Personne ne fait l'**analyse pré-lancement agrégée** ni la **bisection
-automatisée** des conflits.
+Existing tooling is **fragmented and reactive** (post-crash): Almost Unified (content
+unification), YARCF (recipes), Crash Assistant / MCDoctor.ai (log analysis after a crash),
+no-code launchers to _install_. Nobody does **aggregated pre-launch analysis** or **automated
+bisection** of conflicts.
 
-## 2. Objectif
+## 2. Goal
 
-Une **application desktop** qui prend un dossier `mods/` Fabric et :
+A **desktop application** that takes a Fabric `mods/` folder and:
 
-1. produit une **carte de conflits** par analyse statique (rapide, hors-ligne) ;
-2. **confirme avec certitude** les conflits de chargement en bootant un vrai serveur Fabric
-   headless dans un conteneur isolé ;
-3. **isole les paires coupables** par bisection automatisée quand un boot crashe ;
-4. **génère les configs de résolution** no-code (unify.json d'Almost Unified, overrides de
-   recettes en datapack).
+1. produces a **conflict map** through static analysis (fast, offline);
+2. **confirms with certainty** load-time conflicts by booting a real headless Fabric server in
+   an isolated container;
+3. **isolates the guilty pairs** through automated bisection when a boot crashes;
+4. **generates no-code resolution configs** (Almost Unified's unify.json, recipe overrides as a
+   datapack).
 
-## 3. Parti pris architectural fondamental
+## 3. Fundamental architectural bet
 
-**Un conflit n'est pas une propriété d'un jar, c'est une propriété d'un ENSEMBLE.**
-Sandboxer chaque jar isolément ne révèle aucun conflit cross-mod : un mixin ne casse que lorsque
-les deux mods sont présents et que le loader applique les deux transformateurs sur la même classe.
-L'unité de test est donc **le set complet (ou un sous-ensemble) booté ensemble**, jamais un jar seul.
+**A conflict is not a property of a jar, it is a property of a SET.**
+Sandboxing each jar in isolation reveals no cross-mod conflict: a mixin only breaks when both
+mods are present and the loader applies both transformers to the same class.
+The unit of test is therefore **the full set (or a subset) booted together**, never a lone jar.
 
-**Stratégie hybride :**
+**Hybrid strategy:**
 
-- **Statique** pour trier vite et gratuitement (tags, recettes, cibles mixin déclarées).
-- **Runtime headless** pour trancher avec certitude sur les conflits de chargement, et **bisection**
-  pour localiser les paires.
+- **Static** to triage fast and for free (tags, recipes, declared mixin targets).
+- **Headless runtime** to decide with certainty on load-time conflicts, and **bisection**
+  to locate the pairs.
 
-Le statique ne lance un boot que sur les cas ambigus → on minimise le nombre de boots (coûteux).
+Static only triggers a boot on ambiguous cases → the number of boots (expensive) is minimized.
 
 ## 4. Stack
 
-| Couche             | Choix                                  | Notes                                                                                                                                                                                         |
-| ------------------ | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Shell desktop      | **Tauri + React/Vite (TS)**            | Léger ; front TS identique à l'habitude. Surface Rust limitée à la config + commandes de spawn de l'orchestrateur Python. Alternative : Electron (100 % TS+Python) si le Rust devient gênant. |
-| Backend local      | **FastAPI (Python)**                   | Même forme que `papers-helper`. Expose l'API que le front consomme ; pilote Docker et le parsing.                                                                                             |
-| Analyseur statique | Python (`zipfile` + parsing JSON)      | Dézippe les jars, lit métadonnées / mixins / recipes / tags. Consomme le **profil de version** (§6).                                                                                          |
-| Runner runtime     | **Docker** (1 conteneur par boot)      | Image Fabric serveur headless, mods injectés, logs capturés. JDK et artefacts pilotés par le profil de version (§6).                                                                          |
-| Parsing de logs    | Réutiliser les patterns MCLA / mclo.gs | Ne pas réinventer la classification d'erreurs.                                                                                                                                                |
+| Layer            | Choice                                 | Notes                                                                                                                                                                                            |
+| ---------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Desktop shell    | **Tauri + React/Vite (TS)**            | Lightweight; TS front as usual. Rust surface limited to config + commands that spawn the Python orchestrator. Alternative: Electron (100% TS+Python) if the Rust becomes a burden.               |
+| Local backend    | **FastAPI (Python)**                   | Same shape as `papers-helper`. Exposes the API the front consumes; drives Docker and parsing.                                                                                                    |
+| Static analyzer  | Python (`zipfile` + JSON parsing)      | Unzips jars, reads metadata / mixins / recipes / tags. Consumes the **version profile** (§6).                                                                                                    |
+| Runtime runner   | **Docker** (1 container per boot)      | Headless Fabric server image, mods injected, logs captured. JDK and artifacts driven by the version profile (§6).                                                                                |
+| Log parsing      | Reuse MCLA / mclo.gs patterns          | Do not reinvent error classification.                                                                                                                                                           |
 
-**Décision par défaut : Tauri.** C'est aussi un objectif d'apprentissage assumé. Electron reste le
-plan de repli si le poids du couplage Rust ⇄ Python sidecar devient un frein.
+**Default decision: Tauri.** It is also an explicit learning goal. Electron remains the fallback
+plan if the weight of the Rust ⇄ Python sidecar coupling becomes a drag.
 
-## 5. Périmètre MVP
+## 5. MVP scope
 
-**Version cible : `1.21.1`** (bloc 1.21–1.21.1). Choix verrouillé pour le MVP car cohérent avec les
-conventions modernes déjà adoptées dans ce doc : Java 21, items en **components**, dossiers datapack
-au **singulier** (`recipe/`, `advancement/`), tags `c:`. Toute constante dépendante de la version
-passe par le **profil de version** (§6) — jamais de hardcode.
+**Target version: `1.21.1`** (block 1.21–1.21.1). Locked for the MVP because it is consistent with
+the modern conventions already adopted in this doc: Java 21, items as **components**, datapack
+folders **singular** (`recipe/`, `advancement/`), `c:` tags. Every version-dependent constant goes
+through the **version profile** (§6) — never hardcoded.
 
-**Dans le périmètre :**
+**In scope:**
 
-- Loader **Fabric uniquement** (pas Forge/NeoForge au MVP — formats de métadonnées différents).
-- Boot **serveur** headless (pas de client headless au MVP).
-- Détection : duplication de contenu (tags), collisions de recettes, conflits de mixins au
-  chargement, dépendances/versions, jars en double.
-- Génération : `unify.json` (Almost Unified), datapack d'override de recettes.
+- **Fabric loader only** (no Forge/NeoForge in the MVP — different metadata formats).
+- Headless **server** boot (no headless client in the MVP).
+- Detection: content duplication (tags), recipe collisions, load-time mixin conflicts,
+  dependencies/versions, duplicate jars.
+- Generation: `unify.json` (Almost Unified), recipe-override datapack.
 
-**Hors périmètre (assumé, à documenter dans l'UI) :**
+**Out of scope (assumed, to be documented in the UI):**
 
-- Mods **client-only** (`environment: client`) : non chargés par un serveur Fabric → conflits
-  visuels (rendu, shaders, HUD) non testables au MVP. Lire le champ `environment` et afficher
-  « N mods non testables en mode serveur ».
-- Conflits **silencieux** : deux mixins qui cohabitent sans crasher mais cassent le comportement.
-  Non détectables sans assertions de gameplay (modèle gametest type PackTest). Hors MVP.
-- Forge / NeoForge, client headless (Xvfb / GL offscreen), autres blocs de versions : itérations
-  futures (s'ajoutent comme profils + adaptateurs, pas comme réécriture).
+- **Client-only** mods (`environment: client`): not loaded by a Fabric server → visual conflicts
+  (render, shaders, HUD) not testable in the MVP. Read the `environment` field and display
+  "N mods not testable in server mode".
+- **Silent** conflicts: two mixins that coexist without crashing but break behavior.
+  Not detectable without gameplay assertions (a gametest model like PackTest). Out of MVP.
+- Forge / NeoForge, headless client (Xvfb / offscreen GL), other version blocks: future
+  iterations (added as profiles + adapters, not as a rewrite).
 
-## 6. Profil de version (contrat — Phases 1 et 2)
+## 6. Version profile (contract — Phases 1 and 2)
 
-Les constantes dépendantes de la version ne sont **jamais codées en dur**. Elles vivent dans un
-profil que l'analyseur statique (Phase 1) et le runner (Phase 2) consomment tous les deux. MVP =
-profil `1.21.1`.
+Version-dependent constants are **never hardcoded**. They live in a profile that both the static
+analyzer (Phase 1) and the runner (Phase 2) consume. MVP = profile `1.21.1`.
 
 ```jsonc
 {
   "profile": "1.21.1",
-  "jdk": "21", // image Docker du runner
+  "jdk": "21", // runner Docker image
   "itemFormat": "components", // components | nbt
   "datapackFolders": "singular", // singular | plural
-  "recipePath": "data/{mod}/recipe", // pré-1.21 : data/{mod}/recipes
-  "tagPath": "data/{mod}/tags/items", // les tags restent au pluriel à toutes les versions
-  "tagNamespace": "c", // c (1.21+) | forge (ancien)
-  "fabricApi": "<version exacte>", // artefact version-exact requis par le runner
+  "recipePath": "data/{mod}/recipe", // pre-1.21: data/{mod}/recipes
+  "tagPath": "data/{mod}/tags/items", // tags stay plural across all versions
+  "tagNamespace": "c", // c (1.21+) | forge (old)
+  "fabricApi": "<exact version>", // exact-version artifact required by the runner
 }
 ```
 
-**Ajouter un bloc plus tard = ajouter un profil, pas réécrire la logique.** Ex. 1.20.1 :
+**Adding a block later = adding a profile, not rewriting the logic.** E.g. 1.20.1:
 `jdk:17`, `itemFormat:nbt`, `datapackFolders:plural`, `recipePath:data/{mod}/recipes`,
 `tagNamespace:forge`.
 
-Repère des blocs (les ruptures qui changent le profil) :
+Block landmarks (the breaks that change the profile):
 
-| Bloc              | jdk    | itemFormat     | datapackFolders | État modding                                     |
+| Block             | jdk    | itemFormat     | datapackFolders | Modding state                                    |
 | ----------------- | ------ | -------------- | --------------- | ------------------------------------------------ |
-| 1.18 → 1.20.4     | 17     | nbt            | plural          | Très moddé ; 1.20.1 = base reine                 |
-| 1.20.5 → 1.20.6   | 21     | components     | plural          | Transitionnel, peu moddé                         |
-| **1.21 → 1.21.1** | **21** | **components** | **singular**    | **Cible MVP**                                    |
-| 1.21.2+           | 21     | components     | singular        | Courant, churn de format mineur par version      |
-| 26.1+             | 25     | components     | singular        | Récent (fin du préfixe « 1. »), écosystème jeune |
+| 1.18 → 1.20.4     | 17     | nbt            | plural          | Heavily modded; 1.20.1 = reigning base           |
+| 1.20.5 → 1.20.6   | 21     | components     | plural          | Transitional, lightly modded                     |
+| **1.21 → 1.21.1** | **21** | **components** | **singular**    | **MVP target**                                   |
+| 1.21.2+           | 21     | components     | singular        | Current, minor per-version format churn          |
+| 26.1+             | 25     | components     | singular        | Recent (end of the "1." prefix), young ecosystem |
 
-> Rappel : un bloc partage les **constantes de parsing** et l'**image JDK**, pas la
-> substituabilité des jars. Le runner a besoin du jar serveur Fabric + Fabric API **exacts** de la
-> version précise visée (ex. 1.21.1), même au sein du bloc.
+> Reminder: a block shares the **parsing constants** and the **JDK image**, not jar
+> substitutability. The runner needs the **exact** Fabric server jar + Fabric API of the precise
+> targeted version (e.g. 1.21.1), even within the block.
 
-## 7. Catégories de conflits — détection
+## 7. Conflict categories — detection
 
-| Catégorie              | Source statique                                                | Confirmation runtime                                  |
-| ---------------------- | -------------------------------------------------------------- | ----------------------------------------------------- |
-| Duplication de contenu | `tagPath` → chevauchements de tags                             | — (résolu par config)                                 |
-| Collisions de recettes | `recipePath` → mêmes entrées/grille                            | Échec de désérialisation au load                      |
-| Conflits de mixins     | `*.mixins.json` → cibles classe/méthode communes (heuristique) | **Export mixin post-transformation** = vérité terrain |
-| Dépendances / versions | `fabric.mod.json` (depends, version cible)                     | Erreur de résolution au boot                          |
-| Jars en double         | hash / modid dupliqué                                          | Refus de démarrage du loader                          |
+| Category             | Static source                                                  | Runtime confirmation                                  |
+| -------------------- | -------------------------------------------------------------- | ----------------------------------------------------- |
+| Content duplication  | `tagPath` → tag overlaps                                       | — (resolved by config)                                |
+| Recipe collisions    | `recipePath` → same entries/grid                               | Deserialization failure on load                       |
+| Mixin conflicts      | `*.mixins.json` → common class/method targets (heuristic)     | **Post-transformation mixin export** = ground truth   |
+| Dependencies / vers. | `fabric.mod.json` (depends, target version)                   | Resolution error at boot                              |
+| Duplicate jars       | duplicated hash / modid                                        | Loader refuses to start                               |
 
-**Mixins — passer de l'estimation à l'observation** via les flags JVM au boot :
+**Mixins — from estimation to observation** via JVM flags at boot:
 
-- `-Dmixin.debug.export=true` → exporte les classes **après transformation** (qui a patché quoi).
-- `-Dmixin.debug.verbose=true` et `-Dmixin.checks=true` → détail des applications/conflits.
+- `-Dmixin.debug.export=true` → exports classes **after transformation** (who patched what).
+- `-Dmixin.debug.verbose=true` and `-Dmixin.checks=true` → details of applications/conflicts.
 
-On construit la carte de chevauchement à partir de ce que le loader a _réellement fait_, pas des
-cibles déclarées.
+We build the overlap map from what the loader _actually did_, not from declared targets.
 
-## 8. Le runner runtime (cœur du projet)
+## 8. The runtime runner (heart of the project)
 
-Pattern prouvé : un serveur Fabric tourne en headless via
-`java -Xmx<N>G -jar fabric-server-launch.jar nogui`. Des images Docker Fabric serveur prêtes
-existent (OpenJDK + version MC/loader paramétrables, EULA auto, RCON). La version Java provient du
-profil (`jdk`).
+Proven pattern: a Fabric server runs headless via
+`java -Xmx<N>G -jar fabric-server-launch.jar nogui`. Ready-made Fabric server Docker images exist
+(OpenJDK + configurable MC/loader version, auto EULA, RCON). The Java version comes from the
+profile (`jdk`).
 
-**Boucle de boot (orchestrateur Python) :**
+**Boot loop (Python orchestrator):**
 
-1. Préparer un conteneur : image Fabric serveur (jdk du profil) + Fabric API (version exacte) +
-   sous-ensemble de mods injecté.
-2. Lancer le boot, flags de debug mixin activés, timeout.
-3. Le serveur charge : mixins → freeze des registres → datapacks/recettes. On n'a pas besoin
-   d'aller plus loin (pas de gameplay) ; couper après le freeze des registres / chargement monde.
-4. Capturer `latest.log`, `crash-reports/`, export mixin → **classifier** : OK / crash + cause.
+1. Prepare a container: Fabric server image (profile's jdk) + Fabric API (exact version) +
+   injected subset of mods.
+2. Launch the boot, mixin debug flags enabled, timeout.
+3. The server loads: mixins → registry freeze → datapacks/recipes. We don't need to go further
+   (no gameplay); cut off after the registry freeze / world load.
+4. Capture `latest.log`, `crash-reports/`, mixin export → **classify**: OK / crash + cause.
 
-**Sécurité :** exécuter des jars = code arbitraire. Isolation par conteneur (filesystem + réseau
-restreints), jamais en direct sur l'hôte.
+**Security:** running jars = arbitrary code. Isolation via container (restricted filesystem +
+network), never directly on the host.
 
-**Bisection :** quand un set crashe, binary-search → ~log2(N) boots pour isoler la **paire coupable**
-(~9 boots pour 400 mods). C'est la feature différenciante : automatiser ce que les devs de pack
-font à la main.
+**Bisection:** when a set crashes, binary search → ~log2(N) boots to isolate the **guilty pair**
+(~9 boots for 400 mods). This is the differentiating feature: automating what pack devs do by
+hand.
 
-**Coût à assumer :** chaque boot d'un gros pack = minutes + RAM importante. La bisection limite le
-_nombre_ de boots, pas leur poids unitaire.
+**Cost to accept:** each boot of a large pack = minutes + significant RAM. Bisection limits the
+_number_ of boots, not their unit weight.
 
-## 9. Modèle de données — carte de conflits
+## 9. Data model — conflict map
 
-Sortie pivot de l'analyseur statique ET du runner (format unifié, consommé par le front et par le
-générateur de résolutions). Esquisse :
+Pivot output of both the static analyzer AND the runner (unified format, consumed by the front and
+by the resolution generator). Sketch:
 
 ```jsonc
 {
-  "profile": "1.21.1", // profil de version utilisé pour cette analyse
+  "profile": "1.21.1", // version profile used for this analysis
   "mods": [
     {
       "id": "examplemod",
@@ -194,7 +192,7 @@ générateur de résolutions). Esquisse :
       "type": "tag_overlap", // tag_overlap | recipe_collision | mixin_overlap | dependency | duplicate_jar
       "severity": "info", // info | warning | error
       "detectedBy": "static", // static | runtime
-      "members": ["modA", "modB"], // mods impliqués
+      "members": ["modA", "modB"], // mods involved
       "detail": {
         "tag": "c:tin_ingots",
         "items": ["modA:tin_ingot", "modB:tin_ingot"],
@@ -214,65 +212,66 @@ générateur de résolutions). Esquisse :
 }
 ```
 
-## 10. Découpage MVP (à piloter par Claude Code)
+## 10. MVP breakdown (to be driven by Claude Code)
 
-Chaque phase est **shippable** et a un critère d'acceptation clair.
+Each phase is **shippable** and has a clear acceptance criterion.
 
-**Phase 0 — Socle**
-Scaffolding Tauri + React/Vite (TS) ; FastAPI local ; ingestion d'un dossier `mods/` ;
-parsing `fabric.mod.json` → liste des mods + versions + `environment` affichée dans l'UI.
-_DoD :_ déposer un dossier, voir la liste des mods et le compte de mods non testables.
+**Phase 0 — Foundation**
+Tauri + React/Vite (TS) scaffolding; local FastAPI; ingestion of a `mods/` folder;
+parsing of `fabric.mod.json` → list of mods + versions + `environment` displayed in the UI.
+_DoD:_ drop a folder, see the mod list and the count of non-testable mods.
 
-**Phase 1 — Analyseur statique**
-Charge le **profil de version** (§6, profil `1.21.1` au MVP) — aucune constante de chemin/format
-codée en dur. Dézippage des jars ; détection tag*overlap, recipe_collision, mixin_overlap (déclaré),
-dependency, duplicate_jar ; production de la **carte de conflits** (§9) ; rendu UI triable.
-\_DoD :* sur un set réel 1.21.1, carte de conflits cohérente, 100 % hors-ligne, sous quelques secondes ;
-changer de profil ne demanderait aucune modif de logique.
+**Phase 1 — Static analyzer**
+Loads the **version profile** (§6, profile `1.21.1` in the MVP) — no path/format constant
+hardcoded. Unzipping jars; detection of tag_overlap, recipe_collision, mixin_overlap (declared),
+dependency, duplicate_jar; production of the **conflict map** (§9); sortable UI rendering.
+_DoD:_ on a real 1.21.1 set, a coherent conflict map, 100% offline, in a few seconds;
+changing profile would require no logic change.
 
-**Phase 2 — Runner headless**
-Conteneur Docker Fabric serveur dont le JDK et le Fabric API viennent du profil ; boot d'un set
-donné avec flags mixin debug ; capture + classification du log (OK / crash + cause). Pas encore de
-bisection.
-_DoD :_ bouton « tester ce set » → verdict fiable avec cause extraite du log, sur la cible 1.21.1.
+**Phase 2 — Headless runner**
+Docker Fabric server container whose JDK and Fabric API come from the profile; boot of a given set
+with mixin debug flags; capture + classification of the log (OK / crash + cause). No bisection
+yet.
+_DoD:_ a "test this set" button → reliable verdict with the cause extracted from the log, on the
+1.21.1 target.
 
-**Phase 3 — Bisection automatisée**
-Quand un boot crashe : binary-search orchestré jusqu'à la/les paire(s) coupable(s) ;
-report dans la carte de conflits (`detectedBy: runtime`).
-_DoD :_ sur un conflit connu injecté, la paire est isolée automatiquement en ~log2(N) boots.
+**Phase 3 — Automated bisection**
+When a boot crashes: orchestrated binary search down to the guilty pair(s);
+report in the conflict map (`detectedBy: runtime`).
+_DoD:_ on a known injected conflict, the pair is isolated automatically in ~log2(N) boots.
 
-**Phase 4 — Résolution no-code**
-Génération `unify.json` (tag*overlap) et datapack d'override (recipe_collision) ; prévisualisation
-et export depuis l'UI.
-\_DoD :* un conflit de duplication se résout par un fichier généré, sans écrire de code.
+**Phase 4 — No-code resolution**
+Generation of `unify.json` (tag_overlap) and an override datapack (recipe_collision); preview
+and export from the UI.
+_DoD:_ a duplication conflict is resolved by a generated file, without writing code.
 
-## 11. Conventions de travail
+## 11. Working conventions
 
-- Phases strictement incrémentales ; ne pas démarrer la suivante tant que le DoD n'est pas atteint.
-- La **carte de conflits (§9)** est le contrat entre couches ; le **profil de version (§6)** est le
-  contrat entre versions. Statique, runtime et générateur de résolutions s'y conforment tous.
-- Tests : au minimum un set de fixtures de mods (réels ou factices) ciblés **1.21.1** reproduisant
-  chaque catégorie de conflit, pour valider statique + runtime de façon déterministe.
-- Boots runtime toujours en conteneur isolé, jamais sur l'hôte.
-- Documenter explicitement dans l'UI tout ce qui est hors périmètre (mods client-only, conflits
-  silencieux) pour ne pas donner une fausse impression d'exhaustivité.
+- Strictly incremental phases; do not start the next one until the DoD is met.
+- The **conflict map (§9)** is the contract between layers; the **version profile (§6)** is the
+  contract between versions. Static, runtime and the resolution generator all conform to them.
+- Tests: at minimum a set of mod fixtures (real or fake) targeting **1.21.1**, reproducing each
+  conflict category, to validate static + runtime deterministically.
+- Runtime boots always in an isolated container, never on the host.
+- Explicitly document in the UI everything that is out of scope (client-only mods, silent
+  conflicts) so as not to give a false impression of exhaustiveness.
 
-## 12. Références / art antérieur
+## 12. References / prior art
 
-- **Almost Unified** — unification de contenu par tag dominant + réécriture de recettes ; cible de
-  génération du MVP. Config `config/almostunified/unify.json`, `tagOwnerships`.
-- **PackTest** — preuve du pattern serveur Fabric headless en CI (gametests via datapack).
-- **Crash Assistant / MCDoctor.ai / MCLA (mclo.gs)** — classification d'erreurs de log à réutiliser.
-- **Images Docker Fabric serveur** — base du runner (OpenJDK + loader paramétrable, `nogui`).
+- **Almost Unified** — content unification by dominant tag + recipe rewriting; generation target
+  of the MVP. Config `config/almostunified/unify.json`, `tagOwnerships`.
+- **PackTest** — proof of the headless Fabric server pattern in CI (gametests via datapack).
+- **Crash Assistant / MCDoctor.ai / MCLA (mclo.gs)** — log error classification to reuse.
+- **Fabric server Docker images** — base of the runner (OpenJDK + configurable loader, `nogui`).
 - **SpongePowered Mixin** — flags `mixin.debug.export`, `mixin.debug.verbose`, `mixin.checks`.
 
-## 13. Glossaire
+## 13. Glossary
 
-- **Mixin** : mécanisme d'injection de bytecode dans des classes vanilla/mod au chargement.
-- **Tag** : regroupement d'items/blocs (`c:tin_ingots`) servant aux recettes ; clé de l'unification.
-- **Item components** : format des données d'item depuis 1.20.5 (remplace l'ancien NBT).
-- **Profil de version** : objet de constantes (jdk, format items, dossiers datapack, namespace de
-  tags, Fabric API) qui découple la logique de l'outil de la version de Minecraft visée.
-- **Freeze des registres** : moment du chargement où les registres deviennent immuables ; la plupart
-  des conflits de chargement se manifestent avant/à ce point.
-- **Bisection** : recherche dichotomique sur le set de mods pour isoler une paire coupable.
+- **Mixin**: mechanism for injecting bytecode into vanilla/mod classes at load time.
+- **Tag**: grouping of items/blocks (`c:tin_ingots`) used by recipes; key to unification.
+- **Item components**: item data format since 1.20.5 (replaces the old NBT).
+- **Version profile**: an object of constants (jdk, item format, datapack folders, tag namespace,
+  Fabric API) that decouples the tool's logic from the targeted Minecraft version.
+- **Registry freeze**: the load-time moment when registries become immutable; most load-time
+  conflicts manifest before/at this point.
+- **Bisection**: binary search over the mod set to isolate a guilty pair.
