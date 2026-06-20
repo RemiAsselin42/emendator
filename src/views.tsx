@@ -23,9 +23,9 @@ interface TestProps {
   testing: boolean;
 }
 
-function TestButton({ onTest, testing }: TestProps) {
+function TestButton({ onTest, testing, disabled }: TestProps & { disabled?: boolean }) {
   return (
-    <button className="btn-primary" type="button" onClick={onTest} disabled={testing}>
+    <button className="btn-primary" type="button" onClick={onTest} disabled={testing || disabled}>
       {testing ? "booting…" : "Test this set (headless boot)"}
     </button>
   );
@@ -40,6 +40,14 @@ export function Overview({
   const sev = countBySeverity(result.conflicts);
   return (
     <div className="view">
+      {result.detection && (
+        <p className="detected">
+          Minecraft <strong>{result.profile}</strong>
+          {result.detection.block && ` · ${result.detection.block}`}
+          {result.detection.status === "confident" ? " · auto-detected" : " · selected"}
+          {!result.detection.runnerSupported && " · static-only"}
+        </p>
+      )}
       <div className="stats">
         <div className="stat">
           <span className="stat-n">{result.counts.mods}</span>
@@ -216,16 +224,26 @@ export function RuntimeView({
   onBisect,
   bisecting,
   bisectResult,
+  runnerSupported,
+  block,
 }: {
   verdict: RunVerdict | null;
   onBisect: () => void;
   bisecting: boolean;
   bisectResult: BisectResult | null;
+  runnerSupported: boolean;
+  block: string | null;
 } & TestProps) {
   return (
     <div className="view">
+      {!runnerSupported && (
+        <p className="note">
+          Runtime testing isn't available yet for {block ?? "this version"} — static analysis only.
+          The headless runner needs server artifacts that aren't published for this block.
+        </p>
+      )}
       <section className="runner">
-        <TestButton onTest={onTest} testing={testing} />
+        <TestButton onTest={onTest} testing={testing} disabled={!runnerSupported} />
         {testing && <span className="note"> a real boot takes minutes; needs Docker running</span>}
       </section>
 
@@ -259,7 +277,12 @@ export function RuntimeView({
       )}
 
       <section className="runner">
-        <button className="btn-primary" type="button" onClick={onBisect} disabled={bisecting}>
+        <button
+          className="btn-primary"
+          type="button"
+          onClick={onBisect}
+          disabled={bisecting || !runnerSupported}
+        >
           {bisecting ? "bisecting…" : "Find guilty set (bisection)"}
         </button>
         {bisecting && (
@@ -292,7 +315,7 @@ export function RuntimeView({
   );
 }
 
-export function ResolutionView({ modsPath }: { modsPath: string }) {
+export function ResolutionView({ modsPath, version }: { modsPath: string; version?: string }) {
   const [plan, setPlan] = useState<ResolutionPlan | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -305,7 +328,7 @@ export function ResolutionView({ modsPath }: { modsPath: string }) {
     setError(null);
     setExported(null);
     try {
-      setPlan(await resolvePreview(modsPath));
+      setPlan(await resolvePreview(modsPath, version));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setPlan(null);
@@ -320,7 +343,7 @@ export function ResolutionView({ modsPath }: { modsPath: string }) {
     setExporting(true);
     setError(null);
     try {
-      setExported(await resolveExport(modsPath, dir));
+      setExported(await resolveExport(modsPath, dir, version));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

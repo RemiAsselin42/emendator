@@ -28,7 +28,7 @@ from app.models import (
     ScanResult,
     UntestableMod,
 )
-from app.profile import VersionProfile, get_profile
+from app.profile import VersionProfile, resolve_profile
 
 FABRIC_METADATA = "fabric.mod.json"
 CLIENT_REASON = "environment:client not loaded by server boot"
@@ -241,9 +241,42 @@ def build_jar_index(
     return index, None
 
 
-def scan_mods_folder(folder: Path, profile: str) -> ScanResult:
+def read_mods_metadata(folder: Path) -> tuple[list[Mod], list[ScanError]]:
+    """Cheap first pass for version detection: read only each jar's metadata.
+
+    Opens every top-level ``.jar`` and parses just its ``fabric.mod.json`` (no
+    recipes/tags/mixins), so :func:`app.profile.detect_version` can choose a
+    profile *before* the full, profile-dependent scan runs.
+    """
+    mods: list[Mod] = []
+    errors: list[ScanError] = []
+    for jar_path in sorted(folder.glob("*.jar")):
+        try:
+            with zipfile.ZipFile(jar_path) as zf:
+                try:
+                    raw = zf.read(FABRIC_METADATA)
+                except KeyError:
+                    errors.append(
+                        ScanError(jar=jar_path.name, reason="no fabric.mod.json (not a Fabric mod)")
+                    )
+                    continue
+        except zipfile.BadZipFile:
+            errors.append(ScanError(jar=jar_path.name, reason="not a valid jar/zip"))
+            continue
+        except OSError as exc:
+            errors.append(ScanError(jar=jar_path.name, reason=f"could not read jar: {exc}"))
+            continue
+        mod, error = _metadata_to_mod(raw, jar_path.name)
+        if error is not None:
+            errors.append(error)
+        elif mod is not None:
+            mods.append(mod)
+    return mods, errors
+
+
+def scan_mods_folder(folder: Path, version: str) -> ScanResult:
     """Scan every top-level ``.jar`` in ``folder`` and detect static conflicts."""
-    version_profile = get_profile(profile)
+    version_profile = resolve_profile(version)
     jars = sorted(folder.glob("*.jar"))
     indexes: list[JarIndex] = []
     untestable: list[UntestableMod] = []

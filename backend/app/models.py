@@ -87,22 +87,58 @@ class ScanCounts(CamelModel):
     conflicts: int
 
 
+# --- Version detection (PROJECT.md §6) -----------------------------------
+
+# "confident" => the block is unambiguous and the front auto-scans; "ambiguous"
+# => the constraints span incompatible blocks (or none constrain), so the user
+# must pick a version before scanning.
+DetectionStatus = Literal["confident", "ambiguous"]
+
+
+class VersionCandidate(CamelModel):
+    """One version block the mod set could plausibly target (for the picker)."""
+
+    version: str  # representative exact version of the block (runner default)
+    block: str  # block id, e.g. "1.21–1.21.1"
+    mod_count: int  # constraining mods compatible with this block
+
+
+class VersionDetection(CamelModel):
+    """What automatic Minecraft-version detection concluded for a ``mods/`` set."""
+
+    detected_version: str | None  # the version the whole set provably runs on
+    block: str | None  # block id of ``detected_version``
+    jdk: str | None  # JDK the runner needs for that block
+    status: DetectionStatus
+    confidence: float  # share of constraining mods compatible with the pick (0..1)
+    candidates: list[VersionCandidate] = []
+    outliers: list[str] = []  # mod ids incompatible with the chosen version
+    runner_supported: bool = True  # False where runner artifacts aren't available yet
+
+
 class ScanRequest(CamelModel):
-    """Body of ``POST /mods/scan``: absolute path to a ``mods/`` folder."""
+    """Body of ``POST /mods/scan``: a ``mods/`` folder, plus an optional version.
+
+    ``version`` overrides auto-detection (the user's manual pick); when absent the
+    backend detects and refuses to guess on an ambiguous set (HTTP 409).
+    """
 
     path: str
+    version: str | None = None
 
 
 class ScanResult(CamelModel):
     """Outcome of scanning a ``mods/`` folder (Phase 0 slice of the map)."""
 
-    profile: str
+    profile: str  # the exact version actually used for this scan
     mods_path: str
     mods: list[Mod]
     untestable: list[UntestableMod]
     conflicts: list[Conflict]
     errors: list[ScanError]
     counts: ScanCounts
+    # Filled by the API layer (scan_mods_folder itself is profile-only).
+    detection: VersionDetection | None = None
 
 
 # --- Phase 2: headless runner (PROJECT.md §8) ----------------------------
@@ -136,6 +172,8 @@ class RunRequest(CamelModel):
     """Body of ``POST /runner/test``: the ``mods/`` folder to boot as a set."""
 
     path: str
+    # Exact version to boot (itzg VERSION); when absent the backend auto-detects.
+    version: str | None = None
     # Optional per-run overrides (defaults come from the version profile).
     timeout_seconds: int = 300
     memory: str = "3G"
@@ -194,6 +232,7 @@ class ResolveRequest(CamelModel):
     """Body of ``POST /resolve/preview``: the scanned ``mods/`` folder."""
 
     path: str
+    version: str | None = None
     mod_priorities: list[str] | None = None
 
 
@@ -202,6 +241,7 @@ class ExportRequest(CamelModel):
 
     path: str
     out_dir: str
+    version: str | None = None
     mod_priorities: list[str] | None = None
 
 

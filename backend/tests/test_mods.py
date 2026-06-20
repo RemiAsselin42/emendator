@@ -114,6 +114,52 @@ def test_scan_endpoint_returns_camelcase(tmp_path: Path) -> None:
     assert body["counts"]["total"] == 1
 
 
+def test_scan_endpoint_auto_detects_version(tmp_path: Path) -> None:
+    _make_jar(tmp_path, "a.jar", {"id": "a", "depends": {"minecraft": ">=1.21.4"}})
+    res = client.post("/mods/scan", json={"path": str(tmp_path)})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["profile"] == "1.21.4"
+    assert body["detection"]["status"] == "confident"
+    assert body["detection"]["block"] == "1.21.2+"
+
+
+def test_scan_endpoint_409_on_ambiguous(tmp_path: Path) -> None:
+    _make_jar(tmp_path, "old.jar", {"id": "old", "depends": {"minecraft": "<=1.20.6"}})
+    _make_jar(tmp_path, "new.jar", {"id": "new", "depends": {"minecraft": ">=1.21"}})
+    res = client.post("/mods/scan", json={"path": str(tmp_path)})
+    assert res.status_code == 409
+    detection = res.json()["detail"]
+    assert detection["status"] == "ambiguous"
+    assert len(detection["candidates"]) >= 2
+
+
+def test_scan_endpoint_honors_explicit_version(tmp_path: Path) -> None:
+    # Ambiguous set, but the user picked 1.20.6 — scan must proceed with it.
+    _make_jar(tmp_path, "old.jar", {"id": "old", "depends": {"minecraft": "<=1.20.6"}})
+    _make_jar(tmp_path, "new.jar", {"id": "new", "depends": {"minecraft": ">=1.21"}})
+    res = client.post("/mods/scan", json={"path": str(tmp_path), "version": "1.20.6"})
+    assert res.status_code == 200
+    assert res.json()["profile"] == "1.20.6"
+
+
+def test_detect_endpoint(tmp_path: Path) -> None:
+    _make_jar(tmp_path, "a.jar", {"id": "a", "depends": {"minecraft": "1.21.1"}})
+    res = client.post("/mods/detect", json={"path": str(tmp_path)})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["detectedVersion"] == "1.21.1"
+    assert body["block"] == "1.21–1.21.1"
+
+
+def test_profiles_endpoint_lists_blocks() -> None:
+    res = client.get("/profiles")
+    assert res.status_code == 200
+    blocks = {p["block"] for p in res.json()}
+    assert "1.21–1.21.1" in blocks
+    assert "26.1+" in blocks
+
+
 def test_scan_endpoint_rejects_missing_path() -> None:
     res = client.post("/mods/scan", json={"path": "C:/does/not/exist/__nope__"})
     assert res.status_code == 400
