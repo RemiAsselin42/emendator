@@ -66,8 +66,10 @@ a:hover {
   gap: var(--space-lg);
 }
 
-/* Big centered title block at the top. */
+/* Big centered title block at the top; the version bar is pinned to its
+   top-right corner (at the title level). */
 .header {
+  position: relative;
   text-align: center;
 }
 
@@ -177,21 +179,25 @@ a:hover {
   gap: var(--space-sm);
 }
 
-/* Persistent Minecraft-version bar under the header: selector auto-set to the
-   detected version, re-scans on change. */
+/* Minecraft-version selector pinned to the header's top-right corner: auto-set
+   to the detected version, re-scans on change. */
 .version-bar {
+  position: absolute;
+  top: 0;
+  right: 0;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-md);
-  margin-bottom: var(--space-lg);
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-sm);
   font-size: 1rem;
   color: var(--color-text);
+  text-align: right;
 }
 
 .mc-version {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-end;
   gap: var(--space-sm);
 }
 
