@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { Conflict, RunVerdict, ScanResult, Severity } from "./lib/api";
+import { useMemo, useState } from "react";
+import type { BisectResult, Conflict, RunVerdict, ScanResult, Severity } from "./lib/api";
 import {
   CONFLICT_LABEL,
   conflictKey,
@@ -92,6 +92,7 @@ export function ConflictsView({
     });
 
   const rows = conflicts.filter((c) => visible.has(c.severity));
+  const mixinExports = useMemo(() => (verdict ? new Set(verdict.mixinExports) : null), [verdict]);
 
   return (
     <div className="view">
@@ -128,7 +129,7 @@ export function ConflictsView({
                   <td>{CONFLICT_LABEL[c.type]}</td>
                   <td className="subject">
                     {conflictSubject(c)}
-                    {isRuntimeConfirmed(c, verdict) && (
+                    {isRuntimeConfirmed(c, mixinExports) && (
                       <span className="confirmed"> confirmed at runtime</span>
                     )}
                   </td>
@@ -193,11 +194,25 @@ export function ModsView({ result }: { result: ScanResult }) {
   );
 }
 
+function bisectStatusClass(status: BisectResult["status"]): string {
+  if (status === "isolated") return "run-crash";
+  if (status === "no_conflict") return "run-ok";
+  return "run-error";
+}
+
 export function RuntimeView({
   verdict,
   onTest,
   testing,
-}: { verdict: RunVerdict | null } & TestProps) {
+  onBisect,
+  bisecting,
+  bisectResult,
+}: {
+  verdict: RunVerdict | null;
+  onBisect: () => void;
+  bisecting: boolean;
+  bisectResult: BisectResult | null;
+} & TestProps) {
   return (
     <div className="view">
       <section className="runner">
@@ -234,9 +249,36 @@ export function RuntimeView({
         <p className="note">No boot yet. Run a test to get a runtime verdict.</p>
       )}
 
-      <p className="note">
-        Bisection (Phase 3) will isolate the guilty pair here when a boot crashes.
-      </p>
+      <section className="runner">
+        <button className="btn-primary" type="button" onClick={onBisect} disabled={bisecting}>
+          {bisecting ? "bisecting…" : "Find guilty set (bisection)"}
+        </button>
+        {bisecting && (
+          <span className="note"> each step is a real boot (~log2 N); takes minutes</span>
+        )}
+      </section>
+
+      {bisectResult && (
+        <div className="panel">
+          <p>
+            bisection{" "}
+            <span className={bisectStatusClass(bisectResult.status)}>
+              {bisectResult.status.toUpperCase()}
+            </span>
+            {" · "}
+            {bisectResult.boots} boots · {(bisectResult.durationMs / 1000).toFixed(1)}s
+          </p>
+          {bisectResult.members.length > 0 && (
+            <p className="members">guilty set: {bisectResult.members.join(", ")}</p>
+          )}
+          {bisectResult.cause && (
+            <p className="note">
+              {bisectResult.cause.category}: {bisectResult.cause.summary}
+            </p>
+          )}
+          {bisectResult.note && <p className="note">{bisectResult.note}</p>}
+        </div>
+      )}
     </div>
   );
 }

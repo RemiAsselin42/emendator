@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  type BisectResult,
+  bisectSet,
   fetchHealth,
   type HealthResponse,
   type RunVerdict,
@@ -27,6 +29,8 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [verdict, setVerdict] = useState<RunVerdict | null>(null);
   const [testing, setTesting] = useState(false);
+  const [bisectResult, setBisectResult] = useState<BisectResult | null>(null);
+  const [bisecting, setBisecting] = useState(false);
   const [tab, setTab] = useState<Tab>("overview");
 
   useEffect(() => {
@@ -41,6 +45,7 @@ export default function App() {
     setScanning(true);
     setScanError(null);
     setVerdict(null);
+    setBisectResult(null);
     try {
       setResult(await scanMods(trimmed));
       setTab("overview");
@@ -106,9 +111,33 @@ export default function App() {
     return () => unlisten?.();
   }, [runScan]);
 
+  const runBisect = useCallback(async (target: string) => {
+    setBisecting(true);
+    setBisectResult(null);
+    try {
+      setBisectResult(await bisectSet(target));
+    } catch (e) {
+      setBisectResult({
+        status: "error",
+        profile: "",
+        members: [],
+        boots: 0,
+        durationMs: 0,
+        cause: null,
+        note: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setBisecting(false);
+    }
+  }, []);
+
   const onTest = useCallback(() => {
     if (result) void runTest(result.modsPath);
   }, [result, runTest]);
+
+  const onBisect = useCallback(() => {
+    if (result) void runBisect(result.modsPath);
+  }, [result, runBisect]);
 
   return (
     <main className="container">
@@ -177,7 +206,16 @@ export default function App() {
           )}
           {tab === "conflicts" && <ConflictsView conflicts={result.conflicts} verdict={verdict} />}
           {tab === "mods" && <ModsView result={result} />}
-          {tab === "runtime" && <RuntimeView verdict={verdict} onTest={onTest} testing={testing} />}
+          {tab === "runtime" && (
+            <RuntimeView
+              verdict={verdict}
+              onTest={onTest}
+              testing={testing}
+              onBisect={onBisect}
+              bisecting={bisecting}
+              bisectResult={bisectResult}
+            />
+          )}
         </>
       )}
     </main>

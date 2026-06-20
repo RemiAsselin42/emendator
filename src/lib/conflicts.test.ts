@@ -45,9 +45,10 @@ describe("conflicts helpers", () => {
   it("confirms a mixin candidate against the runtime export", () => {
     const hit = mk({ type: "mixin_overlap", detail: { target: "net.minecraft.class_310" } });
     const miss = mk({ type: "mixin_overlap", detail: { target: "net.minecraft.class_999" } });
-    expect(isRuntimeConfirmed(hit, verdict)).toBe(true);
-    expect(isRuntimeConfirmed(miss, verdict)).toBe(false);
-    expect(isRuntimeConfirmed(mk({ type: "tag_overlap" }), verdict)).toBe(false);
+    const exports = new Set(verdict.mixinExports);
+    expect(isRuntimeConfirmed(hit, exports)).toBe(true);
+    expect(isRuntimeConfirmed(miss, exports)).toBe(false);
+    expect(isRuntimeConfirmed(mk({ type: "tag_overlap" }), exports)).toBe(false);
     expect(isRuntimeConfirmed(hit, null)).toBe(false);
   });
 

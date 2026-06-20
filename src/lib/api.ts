@@ -95,6 +95,37 @@ export interface RunVerdict {
   logTail: string | null;
 }
 
+export type BisectStatus = "isolated" | "no_conflict" | "inconclusive" | "error";
+
+export interface BisectResult {
+  status: BisectStatus;
+  profile: string;
+  members: string[];
+  cause: RunCause | null;
+  boots: number;
+  durationMs: number;
+  note: string | null;
+}
+
+export async function bisectSet(path: string): Promise<BisectResult> {
+  const res = await fetch(`${BASE}/runner/bisect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  if (!res.ok) {
+    let detail = `Backend returned ${res.status}`;
+    try {
+      const body = (await res.json()) as { detail?: string };
+      if (body.detail) detail = body.detail;
+    } catch {
+      // non-JSON error body; keep the status-based message
+    }
+    throw new Error(detail);
+  }
+  return res.json() as Promise<BisectResult>;
+}
+
 export async function testSet(path: string): Promise<RunVerdict> {
   const res = await fetch(`${BASE}/runner/test`, {
     method: "POST",

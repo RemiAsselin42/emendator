@@ -152,3 +152,19 @@ class RunVerdict(CamelModel):
     # ground truth that confirms or refutes static mixin_overlap candidates (§7).
     mixin_exports: list[str] = []
     log_tail: str | None = None
+
+
+# Outcome of automated bisection (PROJECT.md §10, Phase 3).
+BisectStatus = Literal["isolated", "no_conflict", "inconclusive", "error"]
+
+
+class BisectResult(CamelModel):
+    """The minimal guilty set isolated by delta-debugging a crashing boot."""
+
+    status: BisectStatus
+    profile: str
+    members: list[str] = []
+    cause: RunCause | None = None
+    boots: int = 0
+    duration_ms: int = 0
+    note: str | None = None

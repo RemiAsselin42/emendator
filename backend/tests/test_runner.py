@@ -9,8 +9,7 @@ PROFILE = get_profile("1.21.1")
 
 
 def test_build_run_args_uses_profile_and_mixin_flags(tmp_path: Path) -> None:
-    req = RunRequest(path=str(tmp_path), memory="4G")
-    args = build_run_args("emendator-test", tmp_path, req, PROFILE)
+    args = build_run_args("emendator-test", tmp_path, "4G", PROFILE)
 
     assert args[:3] == ["docker", "run", "-d"]
     assert f"{runner._IMAGE}:java21" == args[-1]  # JDK from profile
