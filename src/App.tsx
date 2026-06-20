@@ -54,6 +54,7 @@ export default function App() {
     } catch (e) {
       setScanError(e instanceof Error ? e.message : String(e));
       setResult(null);
+      setTab("scan");
     } finally {
       setScanning(false);
     }
@@ -191,7 +192,7 @@ export default function App() {
                 <input
                   className="path-input"
                   type="text"
-                  placeholder="C:\Users\…\mods"
+                  placeholder="C:\\Users\\…\\mods"
                   value={path}
                   onChange={(e) => setPath(e.target.value)}
                   spellCheck={false}
@@ -203,7 +204,7 @@ export default function App() {
             </section>
           )}
 
-          {scanError && tab === "scan" && <p className="scan-error">scan failed: {scanError}</p>}
+          {scanError && <p className="scan-error">scan failed: {scanError}</p>}
 
           {result && tab !== "scan" && (
             <div className="panel-content">

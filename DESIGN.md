@@ -121,7 +121,7 @@ Five roles, plus one text color for accents.
   focus, conflict highlight. Use sparingly so it remains a signal.
 - **secondary `#DE9E36` (light orange)** — secondary accent and **hover state** of gold.
   Drives the color shift on hover (primary → secondary).
-- **background `#37323E` (mauve grey)** — global background, present everywhere.
+- **background `#181719` (mauve grey)** — global background, present everywhere.
 - **surface `#6D6A75` (light mauve grey)** — dual role: default **border color**, and **rare**
   secondary surface (selected row, active area). Do not use as a generalized second background.
 - **text `#F8F5FC` (mauve white)** — body text on dark backgrounds.
