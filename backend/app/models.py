@@ -8,13 +8,24 @@ JSON is emitted in camelCase (matching §9: ``mcVersion``, ``detectedBy``) while
 Python keeps snake_case attributes — the alias generator bridges the two.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
 # environment as declared in fabric.mod.json; "*" means both sides.
 Environment = Literal["server", "client", "*"]
+
+# Conflict taxonomy (PROJECT.md §7, §9).
+ConflictType = Literal[
+    "tag_overlap",
+    "recipe_collision",
+    "mixin_overlap",
+    "dependency",
+    "duplicate_jar",
+]
+Severity = Literal["info", "warning", "error"]
+DetectedBy = Literal["static", "runtime"]
 
 
 class CamelModel(BaseModel):
@@ -32,6 +43,7 @@ class Mod(CamelModel):
     mc_version: str | None = None
     environment: Environment = "*"
     depends: dict[str, str | list[str]] = {}
+    provides: list[str] = []
     jar: str
 
 
@@ -49,6 +61,21 @@ class ScanError(CamelModel):
     reason: str
 
 
+class Conflict(CamelModel):
+    """One detected conflict (PROJECT.md §9).
+
+    ``detail`` is type-specific (e.g. ``{"tag": "c:tin_ingots", "items": [...]}``)
+    and ``resolution`` is filled by the generator in Phase 4.
+    """
+
+    type: ConflictType
+    severity: Severity
+    detected_by: DetectedBy = "static"
+    members: list[str]
+    detail: dict[str, Any] = {}
+    resolution: dict[str, Any] | None = None
+
+
 class ScanCounts(CamelModel):
     """Summary counts surfaced directly in the UI."""
 
@@ -57,6 +84,7 @@ class ScanCounts(CamelModel):
     testable: int
     untestable: int
     errors: int
+    conflicts: int
 
 
 class ScanRequest(CamelModel):
@@ -72,5 +100,6 @@ class ScanResult(CamelModel):
     mods_path: str
     mods: list[Mod]
     untestable: list[UntestableMod]
+    conflicts: list[Conflict]
     errors: list[ScanError]
     counts: ScanCounts
