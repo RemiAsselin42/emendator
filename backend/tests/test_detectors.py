@@ -25,6 +25,7 @@ def _index(
     recipes: dict | None = None,
     item_tags: dict | None = None,
     mixin_targets: set[str] | None = None,
+    mixin_method_targets: set[str] | None = None,
 ) -> JarIndex:
     mod = Mod(
         id=mod_id,
@@ -40,6 +41,7 @@ def _index(
         recipes=recipes or {},
         item_tags=item_tags or {},
         mixin_targets=mixin_targets or set(),
+        mixin_method_targets=mixin_method_targets or set(),
     )
 
 
@@ -116,16 +118,37 @@ def test_recipe_no_collision_distinct_ids() -> None:
     assert detect_recipe_collisions(indexes, PROFILE) == []
 
 
-def test_mixin_overlap_shared_target() -> None:
-    target = "net.minecraft.server.MinecraftServer"
+def test_mixin_overlap_class_only_is_info() -> None:
+    target = "net.minecraft.class_310"
     indexes = [
         _index("a", mixin_targets={target}),
-        _index("b", mixin_targets={target, "net.minecraft.world.World"}),
+        _index("b", mixin_targets={target, "net.minecraft.class_2960"}),
     ]
     conflicts = detect_mixin_overlaps(indexes)
     assert len(conflicts) == 1
-    assert conflicts[0].detail["target"] == target
-    assert conflicts[0].members == ["a", "b"]
+    conflict = conflicts[0]
+    assert conflict.detail["target"] == target
+    assert conflict.severity == "info"
+    assert "sharedMethods" not in conflict.detail
+    assert conflict.members == ["a", "b"]
+
+
+def test_mixin_overlap_shared_method_is_warning() -> None:
+    target = "net.minecraft.class_310"
+    indexes = [
+        _index("a", mixin_targets={target}, mixin_method_targets={f"{target}#tick"}),
+        _index(
+            "b",
+            mixin_targets={target},
+            mixin_method_targets={f"{target}#tick", f"{target}#render"},
+        ),
+    ]
+    conflicts = detect_mixin_overlaps(indexes)
+    assert len(conflicts) == 1
+    conflict = conflicts[0]
+    assert conflict.severity == "warning"
+    assert conflict.detail["sharedMethods"] == ["tick"]  # render is only in b
+    assert conflict.members == ["a", "b"]
 
 
 # --- mixin bytecode parser ------------------------------------------------
@@ -136,8 +159,9 @@ def _utf8(text: str) -> bytes:
     return struct.pack(">BH", 1, len(encoded)) + encoded
 
 
-def _build_mixin_class(class_target: str, string_target: str) -> bytes:
-    """Hand-build a minimal class file carrying @Mixin(value={..}, targets={..})."""
+def _build_mixin_class(class_target: str, string_target: str, method_target: str = "tick") -> bytes:
+    """Hand-build a mixin class: class-level @Mixin(value, targets) plus a method
+    carrying @Inject(method={...}) — exercising both class- and method-level parsing."""
     descriptor = "L" + class_target.replace(".", "/") + ";"
     pool = b"".join(
         [
@@ -148,60 +172,63 @@ def _build_mixin_class(class_target: str, string_target: str) -> bytes:
             _utf8("RuntimeInvisibleAnnotations"),  # #5
             _utf8("Lorg/spongepowered/asm/mixin/Mixin;"),  # #6
             _utf8("value"),  # #7
-            _utf8(descriptor),  # #8 class element descriptor
+            _utf8(descriptor),  # #8
             _utf8("targets"),  # #9
-            _utf8(string_target),  # #10 string element
+            _utf8(string_target),  # #10
+            _utf8("m"),  # #11 method name
+            _utf8("()V"),  # #12 method descriptor
+            _utf8("Code"),  # #13
+            _utf8("RuntimeVisibleAnnotations"),  # #14
+            _utf8("Lorg/spongepowered/asm/mixin/injection/Inject;"),  # #15
+            _utf8("method"),  # #16
+            _utf8(method_target),  # #17
         ]
     )
-    pool += _utf8("m")  # #11 method name
-    pool += _utf8("()V")  # #12 method descriptor
-    pool += _utf8("Code")  # #13 attribute name
-    constant_pool_count = struct.pack(">H", 14)
+    constant_pool_count = struct.pack(">H", 18)
 
-    # annotation body: @Mixin(value={class}, targets={"string"})
-    annotation = struct.pack(">H", 6)  # type_index
-    annotation += struct.pack(">H", 2)  # num element_value_pairs
-    annotation += struct.pack(">H", 7)  # element name "value"
-    annotation += b"["  # array
-    annotation += struct.pack(">H", 1)  # one value
-    annotation += b"c" + struct.pack(">H", 8)  # class -> #8
-    annotation += struct.pack(">H", 9)  # element name "targets"
-    annotation += b"["
-    annotation += struct.pack(">H", 1)
-    annotation += b"s" + struct.pack(">H", 10)  # string -> #10
-    annotations_attr = struct.pack(">H", 1) + annotation  # num_annotations + annotation
+    # class-level @Mixin(value={class}, targets={"string"})
+    mixin = struct.pack(">HH", 6, 2)
+    mixin += struct.pack(">H", 7) + b"[" + struct.pack(">H", 1) + b"c" + struct.pack(">H", 8)
+    mixin += struct.pack(">H", 9) + b"[" + struct.pack(">H", 1) + b"s" + struct.pack(">H", 10)
+    class_annos = struct.pack(">H", 1) + mixin
+    class_attr = struct.pack(">H", 5) + struct.pack(">I", len(class_annos)) + class_annos
 
-    attribute = struct.pack(">H", 5)  # attribute_name_index -> "RuntimeInvisibleAnnotations"
-    attribute += struct.pack(">I", len(annotations_attr)) + annotations_attr
+    # method-level @Inject(method={"<method_target>"})
+    inject = struct.pack(">HH", 15, 1)
+    inject += struct.pack(">H", 16) + b"[" + struct.pack(">H", 1) + b"s" + struct.pack(">H", 17)
+    method_annos = struct.pack(">H", 1) + inject
+    method_anno_attr = struct.pack(">H", 14) + struct.pack(">I", len(method_annos)) + method_annos
+    code_attr = struct.pack(">H", 13) + struct.pack(">I", 4) + b"\x00\x01\x02\x03"
+    method = struct.pack(">HHH", 0x0001, 11, 12)  # access, name #11, descriptor #12
+    method += struct.pack(">H", 2) + code_attr + method_anno_attr  # two attributes
 
-    body = b"\xca\xfe\xba\xbe"  # magic
-    body += struct.pack(">HH", 0, 52)  # minor, major
+    body = b"\xca\xfe\xba\xbe" + struct.pack(">HH", 0, 52)
     body += constant_pool_count + pool
     body += struct.pack(">H", 0x0001)  # access_flags
-    body += struct.pack(">H", 2)  # this_class -> #2
-    body += struct.pack(">H", 4)  # super_class -> #4
+    body += struct.pack(">H", 2)  # this_class
+    body += struct.pack(">H", 4)  # super_class
     body += struct.pack(">H", 0)  # interfaces_count
     body += struct.pack(">H", 0)  # fields_count
-    # One method carrying a (dummy) Code attribute, so the parser must correctly
-    # skip a member attribute before reaching the class-level annotations.
-    code_body = b"\x00\x01\x02\x03"
-    method = struct.pack(">HHH", 0x0001, 11, 12)  # access, name #11, descriptor #12
-    method += struct.pack(">H", 1)  # one attribute
-    method += struct.pack(">H", 13) + struct.pack(">I", len(code_body)) + code_body  # Code #13
     body += struct.pack(">H", 1) + method  # methods_count + the method
-    body += struct.pack(">H", 1) + attribute  # attributes_count + the annotations attr
+    body += struct.pack(">H", 1) + class_attr  # attributes_count + class annotations
     return body
 
 
 def test_extract_mixin_targets_from_bytecode() -> None:
-    class_bytes = _build_mixin_class(
+    targets = _build_mixin_class(
         "net.minecraft.server.MinecraftServer", "net.minecraft.world.World"
     )
-    assert extract_mixin_targets(class_bytes) == {
+    result = extract_mixin_targets(targets)
+    assert result.classes == {
         "net.minecraft.server.MinecraftServer",
         "net.minecraft.world.World",
     }
+    # method-level: each target class paired with the injected method "tick"
+    assert "net.minecraft.server.MinecraftServer#tick" in result.methods
+    assert "net.minecraft.world.World#tick" in result.methods
 
 
 def test_extract_mixin_targets_ignores_garbage() -> None:
-    assert extract_mixin_targets(b"not a class file") == set()
+    result = extract_mixin_targets(b"not a class file")
+    assert result.classes == set()
+    assert result.methods == set()
