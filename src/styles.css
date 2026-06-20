@@ -1,0 +1,44 @@
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  color-scheme: light dark;
+  background-color: #1b1b1f;
+  color: #e8e8ea;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.container {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+h1 {
+  margin-bottom: 0.25rem;
+}
+
+.tagline {
+  margin-top: 0;
+  opacity: 0.7;
+}
+
+.status {
+  margin-top: 2rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid #34343a;
+  border-radius: 8px;
+}
+
+.ok {
+  color: #4ade80;
+}
+
+.err {
+  color: #f87171;
+}

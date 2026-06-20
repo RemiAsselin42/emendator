@@ -1,0 +1,33 @@
+# Fast format/lint gate on commit. Install once:
+#   uv tool install pre-commit   (or: pipx install pre-commit)
+#   pre-commit install
+# Heavier checks (duplication, typecheck, tests) run in CI, not here.
+minimum_pre_commit_version: "3.5.0"
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.18
+    hooks:
+      - id: ruff
+        name: ruff (backend lint)
+        args: [--fix]
+        files: ^backend/.*\.py$
+      - id: ruff-format
+        name: ruff (backend format)
+        files: ^backend/.*\.py$
+
+  - repo: local
+    hooks:
+      - id: biome
+        name: biome check (frontend)
+        entry: pnpm exec biome check --write .
+        language: system
+        files: \.(ts|tsx|js|jsx|json|jsonc|css)$
+        pass_filenames: false
+
+      - id: cargo-fmt
+        name: cargo fmt (tauri)
+        # Skips cleanly until the Rust toolchain is installed.
+        entry: bash -c 'if command -v cargo >/dev/null 2>&1; then cargo fmt --manifest-path src-tauri/Cargo.toml -- --check; else echo "[skip] cargo not installed"; fi'
+        language: system
+        files: ^src-tauri/.*\.rs$
+        pass_filenames: false

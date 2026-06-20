@@ -1,0 +1,25 @@
+[package]
+name = "emendator"
+version = "0.1.0"
+description = "Fabric modpack conflict analyzer (desktop shell)"
+authors = ["Remi Asselin"]
+license = "GPL-3.0-or-later"
+repository = "https://github.com/RemiAsselin42/emendator"
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.2" }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.2" }
+tauri-plugin-log = "2"

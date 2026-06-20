@@ -1,0 +1,13 @@
+{
+  "recommendations": [
+    "biomejs.biome",
+    "charliermarsh.ruff",
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "rust-lang.rust-analyzer",
+    "tauri-apps.tauri-vscode",
+    "vitest.explorer",
+    "ms-azuretools.vscode-docker",
+    "vadimcn.vscode-lldb"
+  ]
+}

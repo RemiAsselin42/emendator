@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/kucherenko/jscpd/master/packages/jscpd/schema.json",
+  "minTokens": 50,
+  "threshold": 3,
+  "reporters": ["console"],
+  "absolute": false,
+  "gitignore": true,
+  "path": ["backend/app", "src-tauri/src"],
+  "ignore": ["**/target/**", "**/.venv/**", "**/__pycache__/**"]
+}
