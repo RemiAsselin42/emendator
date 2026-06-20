@@ -16,6 +16,7 @@ dev = [
     "httpx>=0.28",
     "pyright>=1.1.390",
     "ruff>=0.8",
+    "pyinstaller>=6.21.0",
 ]
 
 # Application, not a distributable package: skip building/installing our own code.

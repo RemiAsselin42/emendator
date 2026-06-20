@@ -51,6 +51,13 @@ htmlcov/
 .env.*
 !.env.example
 
+# ---- Sidecar build artifacts ----
+# The bundled backend binary is built per-platform (PyInstaller) and dropped
+# here before `tauri build`; never committed. The dir is kept via .gitkeep.
+src-tauri/binaries/*
+!src-tauri/binaries/.gitkeep
+*.spec
+
 # ---- Runner runtime artifacts (Docker boots, logs, fixtures output) ----
 # Captured boot logs / crash reports / mixin exports from headless server runs.
 runtime-out/
