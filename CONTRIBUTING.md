@@ -122,6 +122,21 @@ checks (duplication, typecheck, tests) run in CI, not on commit.
 `main` is protected: work on a branch, open a PR, merge once the four CI checks
 pass. See `.github/repo-setup.md` for the repository-level security settings.
 
+## Releases
+
+Push a version tag to build the Windows installer and create a **draft** GitHub
+Release (`.github/workflows/release.yml`):
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow builds the sidecar (`scripts/build-sidecar.sh`), runs
+`tauri build`, and attaches the `.msi` to a draft release — review and publish
+it. Bump `version` in `src-tauri/tauri.conf.json` / `package.json` to match the
+tag. Installers are unsigned for now (no code-signing certificate).
+
 ## Conventions
 
 All artifacts (code, comments, commits, PRs, docs) are in **English**.

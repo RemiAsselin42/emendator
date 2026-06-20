@@ -1,0 +1,51 @@
+name: Release
+
+# Push a version tag (e.g. v0.1.0) to build the Windows installer and create a
+# draft GitHub Release with it attached. Inert on PRs / normal pushes.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build installer + draft release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: pnpm install --frozen-lockfile
+      - name: Sync backend deps
+        working-directory: backend
+        run: uv sync
+
+      # Freeze the FastAPI backend into the sidecar binary Tauri bundles.
+      - name: Build sidecar
+        shell: bash
+        run: ./scripts/build-sidecar.sh
+
+      - name: Build app + draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Emendator ${{ github.ref_name }}"
+          releaseBody: "Windows installer attached below. Review and publish this draft to release."
+          releaseDraft: true
+          prerelease: false
