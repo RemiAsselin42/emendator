@@ -1,12 +1,12 @@
 """Generate no-code resolution artifacts from the conflict map (§10, §12).
 
-- ``tag_overlap`` (content duplication) → an **Almost Unified** ``unify.json``
+- ``tag_overlap`` (content duplication) -> an **Almost Unified** ``unify.json``
   listing the affected ``c:`` tags and a mod-priority order (first mod wins).
   This is the DoD path: a duplication conflict resolved by a generated file.
-- ``recipe_collision`` → a recipe-override **datapack** scaffold (``pack.mcmeta``
+- ``recipe_collision`` -> a recipe-override **datapack** scaffold (``pack.mcmeta``
   + a manifest of colliding recipe ids) the user drops the winning recipe into.
 
-All functions are pure (conflicts → file artifacts); writing to disk is
+All functions are pure (conflicts -> file artifacts); writing to disk is
 :func:`export_plan`.
 """
 
@@ -68,7 +68,7 @@ def generate_recipe_datapack(
         recipe_id = str(conflict.detail.get("recipe", ""))
         namespace, _, rel = recipe_id.partition(":")
         members = ", ".join(conflict.members)
-        lines.append(f"- `{recipe_id}` (from {members}) → data/{namespace}/{segment}/{rel}.json")
+        lines.append(f"- `{recipe_id}` (from {members}) -> data/{namespace}/{segment}/{rel}.json")
 
     return [
         GeneratedFile(
@@ -97,8 +97,8 @@ def build_resolution_plan(
 
     if files:
         summary = (
-            f"{len(tag_overlaps)} tag overlap(s) → unify.json; "
-            f"{len(recipe_collisions)} recipe collision(s) → override datapack."
+            f"{len(tag_overlaps)} tag overlap(s) -> unify.json; "
+            f"{len(recipe_collisions)} recipe collision(s) -> override datapack."
         )
     else:
         summary = "No resolvable conflicts (tag_overlap / recipe_collision) found."
