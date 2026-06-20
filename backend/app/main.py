@@ -48,23 +48,24 @@ def _require_dir(path: str) -> Path:
     return folder
 
 
-def _detect_in_folder(folder: Path) -> VersionDetection:
+def _detect_in_folder(folder: Path, forced: str | None = None) -> VersionDetection:
     """Run version detection from a folder's mod metadata (cheap first pass)."""
     mods, _errors = read_mods_metadata(folder)
-    return detect_version([(mod.id, mod.depends.get("minecraft")) for mod in mods])
+    constraints = [(mod.id, mod.depends.get("minecraft")) for mod in mods]
+    return detect_version(constraints, forced=forced)
 
 
 def _resolve_for(folder: Path, version: str | None) -> tuple[VersionProfile, VersionDetection]:
     """Pick the profile for a request: explicit ``version`` wins, else auto-detect.
 
     Raises HTTP 409 (carrying the :class:`VersionDetection`) when no version is
-    given and the set is ambiguous — the front then asks the user to choose.
+    given and the set is ambiguous — the front then asks the user to choose. The
+    returned detection reflects the version actually used (the override, if any).
     """
-    detection = _detect_in_folder(folder)
-    chosen = version or detection.detected_version
-    if chosen is None or (version is None and detection.status == "ambiguous"):
+    detection = _detect_in_folder(folder, forced=version)
+    if detection.detected_version is None or (version is None and detection.status == "ambiguous"):
         raise HTTPException(status_code=409, detail=detection.model_dump(by_alias=True))
-    return resolve_profile(chosen), detection
+    return resolve_profile(detection.detected_version), detection
 
 
 @app.get("/health")
