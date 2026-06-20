@@ -17,9 +17,10 @@ echo '{"security_and_analysis":{"secret_scanning":{"status":"enabled"},"secret_s
 gh api -X PUT repos/RemiAsselin42/emendator/vulnerability-alerts
 ```
 
-## Branch protection on `main`
+## Branch protection on `main` — DONE (2026-06-20)
 
-Require a passing CI run and a PR before merging:
+Requires a PR + green CI before merging. All four CI jobs are required (Rust was
+promoted once verified green).
 
 ```bash
 gh api -X PUT repos/RemiAsselin42/emendator/branches/main/protection \
@@ -42,4 +43,4 @@ JSON
 ```
 
 > Solo dev: `required_approving_review_count: 0` keeps you unblocked while still
-> requiring green CI. Raise it once there are other reviewers.
+> requiring green CI. `enforce_admins: false` lets you bypass in emergencies.
