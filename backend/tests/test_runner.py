@@ -21,6 +21,20 @@ def test_build_run_args_uses_profile_and_mixin_flags(tmp_path: Path) -> None:
     assert f"{tmp_path.as_posix()}:/data" in joined
 
 
+def test_build_run_args_hardening(tmp_path: Path) -> None:
+    joined = " ".join(build_run_args("c", tmp_path, "2G", PROFILE))
+    assert "--cap-drop ALL" in joined
+    assert "--cap-add CHOWN" in joined
+    assert "--security-opt no-new-privileges" in joined
+    assert "--pids-limit 512" in joined
+    assert "--network bridge" in joined  # default
+
+
+def test_build_run_args_network_override(tmp_path: Path) -> None:
+    joined = " ".join(build_run_args("c", tmp_path, "2G", PROFILE, network="none"))
+    assert "--network none" in joined
+
+
 def test_run_set_rejects_non_directory(tmp_path: Path) -> None:
     missing = tmp_path / "nope"
     verdict = run_set(RunRequest(path=str(missing)), PROFILE)
