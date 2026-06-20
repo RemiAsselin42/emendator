@@ -85,13 +85,18 @@ def test_list_is_or() -> None:
 # --- block_of / resolve_profile -------------------------------------------
 
 
+def _block_id(version: str) -> str | None:
+    block = block_of(McVersion.parse(version))
+    return block.id if block else None
+
+
 def test_block_of_spans_all_five_blocks() -> None:
-    assert block_of(McVersion.parse("1.20.1")).id == "1.18–1.20.4"
-    assert block_of(McVersion.parse("1.20.6")).id == "1.20.5–1.20.6"
-    assert block_of(McVersion.parse("1.21.1")).id == "1.21–1.21.1"
-    assert block_of(McVersion.parse("1.21.5")).id == "1.21.2+"
-    assert block_of(McVersion.parse("26.1")).id == "26.1+"
-    assert block_of(McVersion.parse("1.16")) is None
+    assert _block_id("1.20.1") == "1.18–1.20.4"
+    assert _block_id("1.20.6") == "1.20.5–1.20.6"
+    assert _block_id("1.21.1") == "1.21–1.21.1"
+    assert _block_id("1.21.5") == "1.21.2+"
+    assert _block_id("26.1") == "26.1+"
+    assert _block_id("1.16") is None
 
 
 def test_resolve_profile_pulls_block_constants() -> None:

@@ -200,10 +200,6 @@ export function testSet(path: string, version?: string): Promise<RunVerdict> {
   return postJson<RunVerdict>("/runner/test", { path, version });
 }
 
-export function detectVersion(path: string): Promise<VersionDetection> {
-  return postJson<VersionDetection>("/mods/detect", { path });
-}
-
 export async function listProfiles(): Promise<VersionCandidate[]> {
   const res = await fetch(`${BASE}/profiles`);
   if (!res.ok) throw await httpError(res);
