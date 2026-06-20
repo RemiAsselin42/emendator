@@ -244,9 +244,12 @@ def detect_version(
     block = next(b for b in reversed(_BLOCKS) if votes.get(b.id, 0) == top)  # newest on ties
     in_block = [floor for _, floor in floors if block.contains(floor)]
     detected = max(in_block) if in_block else block.low
-    compatible = [mod_id for mod_id, c in constraining if c.contains(detected)]
-    outliers = [mod_id for mod_id, c in constraining if not c.contains(detected)]
-    confidence = len(compatible) / len(constraining)
+    # Confidence is block-level: a mod counts as compatible if its range touches
+    # the chosen block at all. Patch differences within the block (a mod pinned
+    # to "1.19" or "=1.19.0" in a 1.19.2 pack) must not make a clear pack
+    # ambiguous; only genuinely cross-block mods are outliers.
+    outliers = [mod_id for mod_id, c in constraining if not c.intersects(block.low, block.high)]
+    confidence = (len(constraining) - len(outliers)) / len(constraining)
     status: Literal["confident", "ambiguous"] = "confident" if confidence >= 0.9 else "ambiguous"
     return VersionDetection(
         detected_version=str(detected),
