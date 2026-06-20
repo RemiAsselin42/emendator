@@ -11,9 +11,10 @@ import {
 } from "./lib/api";
 import { ConflictsView, ModsView, Overview, ResolutionView, RuntimeView } from "./views";
 
-type Tab = "overview" | "conflicts" | "mods" | "runtime" | "resolution";
+type Tab = "scan" | "overview" | "conflicts" | "mods" | "runtime" | "resolution";
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: "scan", label: "Scan" },
   { id: "overview", label: "Overview" },
   { id: "conflicts", label: "Conflicts" },
   { id: "mods", label: "Mods" },
@@ -32,7 +33,7 @@ export default function App() {
   const [testing, setTesting] = useState(false);
   const [bisectResult, setBisectResult] = useState<BisectResult | null>(null);
   const [bisecting, setBisecting] = useState(false);
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>("scan");
 
   useEffect(() => {
     fetchHealth()
@@ -53,6 +54,7 @@ export default function App() {
     } catch (e) {
       setScanError(e instanceof Error ? e.message : String(e));
       setResult(null);
+      setTab("scan");
     } finally {
       setScanning(false);
     }
@@ -145,81 +147,89 @@ export default function App() {
       <header className="header">
         <h1>Emendator</h1>
         <p className="tagline">Fabric modpack conflict analyzer</p>
+        <p className="health">
+          {health ? (
+            <span className="up">backend up · profile {health.profile}</span>
+          ) : (
+            <span className="down">backend unreachable — start the sidecar</span>
+          )}
+        </p>
       </header>
 
-      <p className="health">
-        {health ? (
-          <span className="up">backend up · profile {health.profile}</span>
-        ) : (
-          <span className="down">backend unreachable — start the sidecar</span>
-        )}
-      </p>
+      <div className="layout">
+        <nav className="sidebar" aria-label="panels">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className={tab === t.id ? "nav-item nav-item-active" : "nav-item"}
+              onClick={() => setTab(t.id)}
+              disabled={t.id !== "scan" && !result}
+            >
+              {t.label}
+              {result && t.id === "conflicts" && ` (${result.counts.conflicts})`}
+              {result && t.id === "mods" && ` (${result.counts.mods})`}
+            </button>
+          ))}
+        </nav>
 
-      <section
-        className={dragging ? "dropzone dragging" : "dropzone"}
-        aria-label="mods folder drop target"
-      >
-        <p>
-          Drop your modpack's <code>mods/</code> folder here, or paste its path.
-        </p>
-        <form
-          className="dropzone-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void runScan(path);
-          }}
-        >
-          <input
-            className="path-input"
-            type="text"
-            placeholder="C:\Users\…\mods"
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            spellCheck={false}
-          />
-          <button className="btn-primary" type="submit" disabled={scanning || !path.trim()}>
-            {scanning ? "scanning…" : "Scan"}
-          </button>
-        </form>
-      </section>
-
-      {scanError && <p className="scan-error">scan failed: {scanError}</p>}
-
-      {result && (
-        <>
-          <nav className="tabs">
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className={tab === t.id ? "tab tab-active" : "tab"}
-                onClick={() => setTab(t.id)}
+        <div className="content">
+          {tab === "scan" && (
+            <section
+              className={dragging ? "dropzone dragging" : "dropzone"}
+              aria-label="mods folder drop target"
+            >
+              <p>
+                Drop your modpack's <code>mods/</code> folder here, or paste its path.
+              </p>
+              <form
+                className="dropzone-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void runScan(path);
+                }}
               >
-                {t.label}
-                {t.id === "conflicts" && ` (${result.counts.conflicts})`}
-                {t.id === "mods" && ` (${result.counts.mods})`}
-              </button>
-            ))}
-          </nav>
+                <input
+                  className="path-input"
+                  type="text"
+                  placeholder="C:\\Users\\…\\mods"
+                  value={path}
+                  onChange={(e) => setPath(e.target.value)}
+                  spellCheck={false}
+                />
+                <button className="btn-primary" type="submit" disabled={scanning || !path.trim()}>
+                  {scanning ? "scanning…" : "Scan"}
+                </button>
+              </form>
+            </section>
+          )}
 
-          {tab === "overview" && (
-            <Overview result={result} verdict={verdict} onTest={onTest} testing={testing} />
+          {scanError && <p className="scan-error">scan failed: {scanError}</p>}
+
+          {result && tab !== "scan" && (
+            <div className="panel-content">
+              {tab === "overview" && (
+                <Overview result={result} verdict={verdict} onTest={onTest} testing={testing} />
+              )}
+              {tab === "conflicts" && (
+                <ConflictsView conflicts={result.conflicts} verdict={verdict} />
+              )}
+              {tab === "mods" && <ModsView result={result} />}
+              {tab === "runtime" && (
+                <RuntimeView
+                  verdict={verdict}
+                  onTest={onTest}
+                  testing={testing}
+                  onBisect={onBisect}
+                  bisecting={bisecting}
+                  bisectResult={bisectResult}
+                />
+              )}
+              {tab === "resolution" && <ResolutionView modsPath={result.modsPath} />}
+            </div>
           )}
-          {tab === "conflicts" && <ConflictsView conflicts={result.conflicts} verdict={verdict} />}
-          {tab === "mods" && <ModsView result={result} />}
-          {tab === "runtime" && (
-            <RuntimeView
-              verdict={verdict}
-              onTest={onTest}
-              testing={testing}
-              onBisect={onBisect}
-              bisecting={bisecting}
-              bisectResult={bisectResult}
-            />
-          )}
-          {tab === "resolution" && <ResolutionView modsPath={result.modsPath} />}
-        </>
-      )}
+        </div>
+      </div>
     </main>
   );
 }
