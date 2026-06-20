@@ -180,7 +180,10 @@ export default function App() {
   }));
   if (version && !versionOptions.some((o) => o.value === version)) {
     const block = result?.detection?.block;
-    versionOptions.unshift({ value: version, label: block ? `${version} · ${block}` : version });
+    versionOptions.unshift({
+      value: version,
+      label: block ? `${version} · ${block}` : version,
+    });
   }
 
   return (
@@ -199,7 +202,6 @@ export default function App() {
         {result && (
           <div className="version-bar">
             <label className="mc-version">
-              Minecraft version
               <select
                 value={version ?? ""}
                 disabled={scanning}
@@ -289,7 +291,8 @@ export default function App() {
                     disabled={scanning}
                     onClick={() => void runScan(path, c.version)}
                   >
-                    {c.block} · {c.version} ({c.modCount} mod{c.modCount === 1 ? "" : "s"})
+                    {c.block} · {c.version} ({c.modCount} mod
+                    {c.modCount === 1 ? "" : "s"})
                   </button>
                 ))}
               </div>

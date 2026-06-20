@@ -7,12 +7,13 @@ version: the exact version string (fed to the runner as itzg ``VERSION``) plus
 the constants of the block that version falls in.
 
 :func:`detect_version` turns the mods' ``depends.minecraft`` constraints into a
-concrete target — the highest floor the whole set requires — and the block it
-maps to, refusing to guess when the set spans incompatible blocks.
+concrete target — the block where most mods cluster, then the newest in-block
+floor — refusing to guess when the set spans incompatible blocks.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -192,11 +193,11 @@ def detect_version(
 ) -> VersionDetection:
     """Derive the target version from each mod's ``depends.minecraft``.
 
-    The detected version is the **highest floor** any mod requires — the lowest
-    version on which the whole set provably runs. The block it maps to selects
-    the parsing constants. Detection is ``confident`` only when ≥90% of the
-    constraining mods are compatible with that version; otherwise the set spans
-    incompatible blocks and the caller must ask the user to pick.
+    The target is the version *block* where the most mods' floors cluster (a
+    stray newer mod can't drag the set up), then the newest in-block floor as the
+    exact version. Detection is ``confident`` only when ≥90% of the constraining
+    mods can run that version; otherwise the set spans incompatible blocks and
+    the caller must ask the user to pick.
 
     ``forced`` short-circuits the heuristic with the user's manual pick: the
     result then reflects *that* version's block (and which mods it leaves
@@ -222,23 +223,40 @@ def detect_version(
             outliers=[],
         )
 
-    detected = max(c.floor() for _, c in constraining)
-    block = block_of(detected)
+    # The pack targets the version *block* where the most mods' floors cluster —
+    # not the single highest floor. A stray newer mod (or an open-ended ">="
+    # library that technically also runs on a much later version) must not drag a
+    # whole 1.19.2 pack up to 1.21. Within the winning block, the exact version is
+    # the newest floor the in-block mods need (so the runner boots that).
+    floors = [(mod_id, c.floor()) for mod_id, c in constraining]
+    votes = Counter(b.id for _, floor in floors if (b := block_of(floor)) is not None)
+    if not votes:
+        return VersionDetection(
+            detected_version=None,
+            block=None,
+            jdk=None,
+            status="ambiguous",
+            confidence=0.0,
+            candidates=candidates,
+            outliers=[],
+        )
+    top = max(votes.values())
+    block = next(b for b in reversed(_BLOCKS) if votes.get(b.id, 0) == top)  # newest on ties
+    in_block = [floor for _, floor in floors if block.contains(floor)]
+    detected = max(in_block) if in_block else block.low
     compatible = [mod_id for mod_id, c in constraining if c.contains(detected)]
     outliers = [mod_id for mod_id, c in constraining if not c.contains(detected)]
     confidence = len(compatible) / len(constraining)
-    status: Literal["confident", "ambiguous"] = (
-        "confident" if confidence >= 0.9 and block is not None else "ambiguous"
-    )
+    status: Literal["confident", "ambiguous"] = "confident" if confidence >= 0.9 else "ambiguous"
     return VersionDetection(
-        detected_version=str(detected) if block is not None else None,
-        block=block.id if block is not None else None,
-        jdk=block.jdk if block is not None else None,
+        detected_version=str(detected),
+        block=block.id,
+        jdk=block.jdk,
         status=status,
         confidence=round(confidence, 3),
         candidates=candidates,
         outliers=sorted(outliers),
-        runner_supported=block.runner_supported if block is not None else False,
+        runner_supported=block.runner_supported,
     )
 
 

@@ -181,6 +181,17 @@ def test_forced_version_reflects_picked_block() -> None:
     assert det.outliers == ["a", "b"]  # neither supports 1.20.1
 
 
+def test_stray_newer_mod_does_not_hijack_the_pack() -> None:
+    # A 1.19.2 pack: many open-ended ">=1.19.2" mods + one stray ">=1.21" library.
+    # The pack must still be detected as 1.19.2 (the cluster), not dragged to 1.21.
+    mods = [(f"m{i}", ">=1.19.2") for i in range(20)] + [("stray", ">=1.21")]
+    det = detect_version(mods)
+    assert det.detected_version == "1.19.2"
+    assert det.block == "1.18–1.20.4"
+    assert det.status == "confident"  # 20/21 ≥ 0.9
+    assert det.outliers == ["stray"]
+
+
 def test_or_pipe_constraint() -> None:
     c = parse_constraint("1.20.1 || >=1.21")
     assert c.contains(McVersion.parse("1.20.1"))
