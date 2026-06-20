@@ -103,3 +103,52 @@ class ScanResult(CamelModel):
     conflicts: list[Conflict]
     errors: list[ScanError]
     counts: ScanCounts
+
+
+# --- Phase 2: headless runner (PROJECT.md §8) ----------------------------
+
+# Terminal outcome of a boot attempt. "error" = harness/Docker failure, not a
+# verdict on the mod set.
+RunStatus = Literal["ok", "crash", "timeout", "error"]
+
+# Runtime crash categories, parsed from the server log / crash report.
+CrashCategory = Literal[
+    "mixin_apply",
+    "missing_dependency",
+    "incompatible_mod",
+    "duplicate_mod",
+    "recipe_error",
+    "startup_error",
+    "unknown",
+]
+
+
+class RunCause(CamelModel):
+    """Extracted explanation of why a boot failed."""
+
+    category: CrashCategory
+    summary: str
+    mods: list[str] = []
+    excerpt: str | None = None
+
+
+class RunRequest(CamelModel):
+    """Body of ``POST /runner/test``: the ``mods/`` folder to boot as a set."""
+
+    path: str
+    # Optional per-run overrides (defaults come from the version profile).
+    timeout_seconds: int = 300
+    memory: str = "3G"
+
+
+class RunVerdict(CamelModel):
+    """Result of booting a mod set in a headless Fabric server container."""
+
+    status: RunStatus
+    profile: str
+    duration_ms: int
+    cause: RunCause | None = None
+    # Classes the loader actually transformed (mixin debug export) — the
+    # ground truth that confirms or refutes static mixin_overlap candidates (§7).
+    mixin_exports: list[str] = []
+    log_tail: str | None = None

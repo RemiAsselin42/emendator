@@ -222,6 +222,41 @@ a:hover {
   opacity: 0.7;
 }
 
+.runner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+/* Runtime verdict status colors. */
+.run-ok {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.run-crash,
+.run-timeout {
+  color: var(--color-secondary);
+  font-weight: 600;
+}
+
+.run-error {
+  opacity: 0.7;
+  font-weight: 600;
+}
+
+.log {
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-sm);
+  max-height: 240px;
+  overflow: auto;
+}
+
 /* Severity: gold is the conflict signal (DESIGN.md), reserved for errors. */
 .sev-error {
   color: var(--color-primary);
