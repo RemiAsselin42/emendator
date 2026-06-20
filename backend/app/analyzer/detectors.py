@@ -30,6 +30,8 @@ class JarIndex:
     recipes: dict[str, dict[str, Any]] = field(default_factory=dict)
     item_tags: dict[str, dict[str, Any]] = field(default_factory=dict)
     mixin_targets: set[str] = field(default_factory=set)
+    # "<target class>#<method>" pairs from injector annotations (method-level).
+    mixin_method_targets: set[str] = field(default_factory=set)
     # Mod ids (and their `provides`) shipped as nested jars inside this jar.
     bundled_ids: set[str] = field(default_factory=set)
 
@@ -188,27 +190,39 @@ def _recipe_id_from_path(path: str) -> str | None:
 def detect_mixin_overlaps(indexes: list[JarIndex]) -> list[Conflict]:
     """≥2 mods whose mixins target the same class.
 
-    This is class-level and intentionally coarse: many mods co-patching a vanilla
-    class (e.g. MinecraftClient) is normal and usually harmless. We surface it as
-    ``info`` — a *candidate* set to confirm with the runtime mixin export in
-    Phase 2 (§7: declared targets triage, post-transformation export is ground
-    truth). Targets are intermediary names (``net.minecraft.class_310``) in
-    distributed jars, which still match consistently across mods.
+    Class-level overlap alone is coarse — many mods co-patch a vanilla class
+    (e.g. MinecraftClient) harmlessly — so it stays ``info``. But when the mods
+    also patch the **same method** of that class (from injector ``method``
+    targets) the conflict is far more likely, so it is raised to ``warning`` and
+    the shared methods are listed. The target stays class-level so the runtime
+    mixin export (§7) can still confirm it. Names are intermediary
+    (``net.minecraft.class_310``) in distributed jars but match across mods.
     """
-    by_target: dict[str, set[str]] = defaultdict(set)
+    by_class: dict[str, set[str]] = defaultdict(set)
+    by_class_method: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     for index in indexes:
         for target in index.mixin_targets:
-            by_target[target].add(index.mod.id)
+            by_class[target].add(index.mod.id)
+        for pair in index.mixin_method_targets:
+            target, _, method = pair.partition("#")
+            by_class_method[target][method].add(index.mod.id)
 
     conflicts: list[Conflict] = []
-    for target, mods in by_target.items():
-        if len(mods) > 1:
-            conflicts.append(
-                Conflict(
-                    type="mixin_overlap",
-                    severity="info",
-                    members=sorted(mods),
-                    detail={"target": target},
-                )
+    for target, mods in by_class.items():
+        if len(mods) < 2:
+            continue
+        shared_methods = sorted(
+            method for method, owners in by_class_method[target].items() if len(owners) > 1
+        )
+        detail: dict[str, Any] = {"target": target}
+        if shared_methods:
+            detail["sharedMethods"] = shared_methods
+        conflicts.append(
+            Conflict(
+                type="mixin_overlap",
+                severity="warning" if shared_methods else "info",
+                members=sorted(mods),
+                detail=detail,
             )
+        )
     return conflicts

@@ -14,6 +14,7 @@ import hashlib
 import io
 import json
 import zipfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -117,9 +118,10 @@ def _read_data_jsons(
     return out
 
 
-def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> set[str]:
-    """Union of ``@Mixin`` targets across every ``*.mixins.json`` config's classes."""
-    targets: set[str] = set()
+def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> tuple[set[str], set[str]]:
+    """``@Mixin`` class targets and ``Class#method`` pairs across the jar's mixins."""
+    classes: set[str] = set()
+    methods: set[str] = set()
     for name in names:
         if not name.endswith(".mixins.json"):
             continue
@@ -131,33 +133,47 @@ def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> set[str]:
             continue
         base = config["package"].replace(".", "/")
         for section in _MIXIN_SECTIONS:
-            classes = config.get(section)
-            if not isinstance(classes, list):
+            mixin_classes = config.get(section)
+            if not isinstance(mixin_classes, list):
                 continue
-            for class_name in classes:
+            for class_name in mixin_classes:
                 if not isinstance(class_name, str):
                     continue
                 class_path = f"{base}/{class_name.replace('.', '/')}.class"
                 try:
-                    targets |= extract_mixin_targets(zf.read(class_path))
+                    targets = extract_mixin_targets(zf.read(class_path))
                 except KeyError:
                     continue
-    return targets
+                classes |= targets.classes
+                methods |= targets.methods
+    return classes, methods
 
 
 _MAX_NEST_DEPTH = 4
 
 
-def _collect_bundled_ids(zf: zipfile.ZipFile, names: list[str], depth: int = 0) -> set[str]:
-    """Recursively gather mod ids + ``provides`` from nested jars (``jars-in-jars``).
+@dataclass
+class _Nested:
+    """What we harvest from a jar's nested jars (jars-in-jars)."""
 
-    Fabric ships libraries (and the Fabric API's own modules) as ``.jar`` files
-    bundled inside a mod jar; their ids satisfy dependencies even though they are
-    never standalone jars in ``mods/``. We read only their ``fabric.mod.json``.
+    ids: set[str] = field(default_factory=set)
+    mixin_classes: set[str] = field(default_factory=set)
+    mixin_methods: set[str] = field(default_factory=set)
+
+
+def _collect_nested(zf: zipfile.ZipFile, names: list[str], depth: int = 0) -> _Nested:
+    """Recursively harvest ids/provides and mixin targets from nested jars.
+
+    Fabric ships libraries — and the Fabric API's own modules, which carry many
+    mixins — as ``.jar`` files bundled inside a mod jar. Their ids satisfy
+    dependencies, and their mixins matter for overlap detection (the API patches
+    plenty of vanilla classes). Nested recipes/tags are intentionally *not*
+    merged: two mods bundling the same library would look like a false content
+    collision, and the loader dedupes them at runtime anyway.
     """
-    ids: set[str] = set()
+    result = _Nested()
     if depth >= _MAX_NEST_DEPTH:
-        return ids
+        return result
     for name in names:
         if not name.endswith(".jar"):
             continue
@@ -172,14 +188,20 @@ def _collect_bundled_ids(zf: zipfile.ZipFile, names: list[str], depth: int = 0) 
                 if isinstance(data, dict):
                     nested_id = data.get("id")
                     if isinstance(nested_id, str) and nested_id:
-                        ids.add(nested_id)
+                        result.ids.add(nested_id)
                     provides = data.get("provides")
                     if isinstance(provides, list):
-                        ids.update(p for p in provides if isinstance(p, str))
-                ids |= _collect_bundled_ids(nested, nested_names, depth + 1)
+                        result.ids.update(p for p in provides if isinstance(p, str))
+                nested_classes, nested_methods = _collect_mixin_targets(nested, nested_names)
+                result.mixin_classes |= nested_classes
+                result.mixin_methods |= nested_methods
+                deeper = _collect_nested(nested, nested_names, depth + 1)
+                result.ids |= deeper.ids
+                result.mixin_classes |= deeper.mixin_classes
+                result.mixin_methods |= deeper.mixin_methods
         except (KeyError, zipfile.BadZipFile, OSError):
             continue
-    return ids
+    return result
 
 
 def build_jar_index(
@@ -200,14 +222,17 @@ def build_jar_index(
             if error is not None:
                 return None, error
             assert mod is not None
+            mixin_classes, mixin_methods = _collect_mixin_targets(zf, names)
+            nested = _collect_nested(zf, names)
             index = JarIndex(
                 jar=jar_path.name,
                 mod=mod,
                 sha256=sha256,
                 recipes=_read_data_jsons(zf, names, profile.recipe_path),
                 item_tags=_read_data_jsons(zf, names, profile.tag_path),
-                mixin_targets=_collect_mixin_targets(zf, names),
-                bundled_ids=_collect_bundled_ids(zf, names),
+                mixin_targets=mixin_classes | nested.mixin_classes,
+                mixin_method_targets=mixin_methods | nested.mixin_methods,
+                bundled_ids=nested.ids,
             )
     except zipfile.BadZipFile:
         return None, ScanError(jar=jar_path.name, reason="not a valid jar/zip")
