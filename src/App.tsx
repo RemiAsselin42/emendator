@@ -5,10 +5,12 @@ import {
   bisectSet,
   fetchHealth,
   type HealthResponse,
+  listProfiles,
   type RunVerdict,
   type ScanResult,
   scanMods,
   testSet,
+  type VersionCandidate,
   type VersionDetection,
 } from "./lib/api";
 import { ConflictsView, ModsView, Overview, ResolutionView, RuntimeView } from "./views";
@@ -41,11 +43,16 @@ export default function App() {
   const [version, setVersion] = useState<string | null>(null);
   // Set when a scan is rejected as ambiguous (§6): drives the version picker.
   const [pendingDetection, setPendingDetection] = useState<VersionDetection | null>(null);
+  // Version blocks offered in the manual override (§6).
+  const [profiles, setProfiles] = useState<VersionCandidate[]>([]);
 
   useEffect(() => {
     fetchHealth()
       .then(setHealth)
       .catch(() => setHealth(null));
+    listProfiles()
+      .then(setProfiles)
+      .catch(() => setProfiles([]));
   }, []);
 
   // `pick` is the user's manual version choice from the ambiguity picker; when
@@ -223,6 +230,26 @@ export default function App() {
                   {scanning ? "scanning…" : "Scan"}
                 </button>
               </form>
+              {profiles.length > 0 && (
+                <label className="version-override">
+                  target version
+                  <select
+                    value={result ? (version ?? "") : ""}
+                    disabled={scanning || !path.trim()}
+                    onChange={(e) => {
+                      const pick = e.target.value;
+                      if (path.trim()) void runScan(path, pick || undefined);
+                    }}
+                  >
+                    <option value="">auto-detect</option>
+                    {profiles.map((p) => (
+                      <option key={p.block} value={p.version}>
+                        {p.block} ({p.version})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </section>
           )}
 

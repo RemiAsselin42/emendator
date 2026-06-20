@@ -177,6 +177,25 @@ a:hover {
   gap: var(--space-sm);
 }
 
+/* Always-available manual version override under the scan form. */
+.version-override {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+  font-size: 1rem;
+  color: var(--color-text);
+}
+
+.version-override select {
+  padding: var(--space-sm);
+  background: var(--color-background);
+  color: var(--color-text);
+  border: var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+}
+
 /* Detected Minecraft version line at the top of the Overview. */
 .detected {
   font-size: 1rem;
