@@ -9,15 +9,16 @@ import {
   scanMods,
   testSet,
 } from "./lib/api";
-import { ConflictsView, ModsView, Overview, RuntimeView } from "./views";
+import { ConflictsView, ModsView, Overview, ResolutionView, RuntimeView } from "./views";
 
-type Tab = "overview" | "conflicts" | "mods" | "runtime";
+type Tab = "overview" | "conflicts" | "mods" | "runtime" | "resolution";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "conflicts", label: "Conflicts" },
   { id: "mods", label: "Mods" },
   { id: "runtime", label: "Runtime" },
+  { id: "resolution", label: "Resolution" },
 ];
 
 export default function App() {
@@ -216,6 +217,7 @@ export default function App() {
               bisectResult={bisectResult}
             />
           )}
+          {tab === "resolution" && <ResolutionView modsPath={result.modsPath} />}
         </>
       )}
     </main>

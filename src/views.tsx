@@ -1,5 +1,14 @@
 import { useMemo, useState } from "react";
-import type { BisectResult, Conflict, RunVerdict, ScanResult, Severity } from "./lib/api";
+import type {
+  BisectResult,
+  Conflict,
+  ExportResult,
+  ResolutionPlan,
+  RunVerdict,
+  ScanResult,
+  Severity,
+} from "./lib/api";
+import { resolveExport, resolvePreview } from "./lib/api";
 import {
   CONFLICT_LABEL,
   conflictKey,
@@ -278,6 +287,100 @@ export function RuntimeView({
           )}
           {bisectResult.note && <p className="note">{bisectResult.note}</p>}
         </div>
+      )}
+    </div>
+  );
+}
+
+export function ResolutionView({ modsPath }: { modsPath: string }) {
+  const [plan, setPlan] = useState<ResolutionPlan | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [outDir, setOutDir] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exported, setExported] = useState<ExportResult | null>(null);
+
+  const generate = async () => {
+    setLoading(true);
+    setError(null);
+    setExported(null);
+    try {
+      setPlan(await resolvePreview(modsPath));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setPlan(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const doExport = async () => {
+    const dir = outDir.trim();
+    if (!dir) return;
+    setExporting(true);
+    setError(null);
+    try {
+      setExported(await resolveExport(modsPath, dir));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  return (
+    <div className="view">
+      <section className="runner">
+        <button
+          className="btn-primary"
+          type="button"
+          onClick={() => void generate()}
+          disabled={loading}
+        >
+          {loading ? "generating…" : "Generate resolution"}
+        </button>
+      </section>
+
+      {error && <p className="scan-error">{error}</p>}
+
+      {plan && (
+        <>
+          <p className="note">{plan.summary}</p>
+          {plan.files.map((file) => (
+            <div className="panel" key={file.path}>
+              <p className="note">{file.path}</p>
+              <pre className="log">{file.content}</pre>
+            </div>
+          ))}
+
+          {plan.files.length > 0 && (
+            <>
+              <section className="runner">
+                <input
+                  className="path-input"
+                  type="text"
+                  placeholder="output folder (e.g. your pack root)"
+                  value={outDir}
+                  onChange={(e) => setOutDir(e.target.value)}
+                  spellCheck={false}
+                />
+                <button
+                  className="btn-primary"
+                  type="button"
+                  onClick={() => void doExport()}
+                  disabled={exporting || !outDir.trim()}
+                >
+                  {exporting ? "exporting…" : "Export files"}
+                </button>
+              </section>
+              {exported && (
+                <p className="note">
+                  wrote {exported.written.length} file(s) to {exported.outDir}
+                </p>
+              )}
+            </>
+          )}
+        </>
       )}
     </div>
   );
