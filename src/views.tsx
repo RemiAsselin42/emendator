@@ -40,14 +40,6 @@ export function Overview({
   const sev = countBySeverity(result.conflicts);
   return (
     <div className="view">
-      {result.detection && (
-        <p className="detected">
-          Minecraft <strong>{result.profile}</strong>
-          {result.detection.block && ` · ${result.detection.block}`}
-          {result.detection.status === "confident" ? " · auto-detected" : " · selected"}
-          {!result.detection.runnerSupported && " · static-only"}
-        </p>
-      )}
       <div className="stats">
         <div className="stat">
           <span className="stat-n">{result.counts.mods}</span>
@@ -77,9 +69,7 @@ export function Overview({
             <span className={`run-${verdict.status}`}>{verdict.status.toUpperCase()}</span>
           </span>
         ) : (
-          <span className="note">
-            profile {result.profile} · {result.modsPath}
-          </span>
+          <span className="note">{result.modsPath}</span>
         )}
       </section>
     </div>
