@@ -160,6 +160,33 @@ a:hover {
   font-size: 1rem;
 }
 
+/* Manual version picker shown when detection is ambiguous (§6). */
+.version-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  margin-top: var(--space-md);
+  padding: var(--space-md);
+  border: var(--border);
+  border-radius: var(--radius);
+}
+
+.picker-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+/* Detected Minecraft version line at the top of the Overview. */
+.detected {
+  font-size: 1rem;
+  color: var(--color-text);
+}
+
+.detected strong {
+  color: var(--color-primary);
+}
+
 /* Result summary line. */
 .summary {
   display: flex;

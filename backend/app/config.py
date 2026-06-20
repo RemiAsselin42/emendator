@@ -10,8 +10,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Default MVP version profile (see PROJECT.md §6).
-    profile: str = "1.21.1"
+    # Fallback target when a folder carries no version constraints (see §6).
+    # Auto-detection (app.profile.detect_version) is the normal path.
+    default_version: str = "1.21.1"
     host: str = "127.0.0.1"
     port: int = 8008
     # Origins allowed to call the sidecar: the Vite dev server and the bundled

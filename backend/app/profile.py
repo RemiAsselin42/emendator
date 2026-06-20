@@ -1,19 +1,29 @@
-"""Version profiles (PROJECT.md §6).
+"""Version profiles and version-block detection (PROJECT.md §6).
 
 Version-dependent constants are **never hardcoded** in the analyzer; they live
-here and are consumed by both the static analyzer (Phase 1) and the runner
-(Phase 2). Adding a new Minecraft block = adding a profile, not rewriting logic.
+here, grouped into *blocks* (ranges of Minecraft versions that share parsing
+constants and a JDK). A :class:`VersionProfile` is *resolved* from a concrete
+version: the exact version string (fed to the runner as itzg ``VERSION``) plus
+the constants of the block that version falls in.
+
+:func:`detect_version` turns the mods' ``depends.minecraft`` constraints into a
+concrete target — the highest floor the whole set requires — and the block it
+maps to, refusing to guess when the set spans incompatible blocks.
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass
 from typing import Literal
 
-from app.models import CamelModel
+from app.models import CamelModel, VersionCandidate, VersionDetection
+from app.version import Constraint, McVersion, parse_constraint
 
 
 class VersionProfile(CamelModel):
     """Constants that decouple the tool's logic from a Minecraft version."""
 
-    profile: str
+    profile: str  # the exact resolved version (e.g. "1.21.5") — runner VERSION
     jdk: str
     item_format: Literal["components", "nbt"]
     datapack_folders: Literal["singular", "plural"]
@@ -22,8 +32,8 @@ class VersionProfile(CamelModel):
     recipe_path: str
     tag_path: str
     tag_namespace: str
-    fabric_api: str
-    datapack_format: int  # pack_format for generated datapacks (1.21–1.21.1 = 48)
+    datapack_format: int  # pack_format for generated datapacks
+    runner_supported: bool = True
 
     def recipe_glob(self) -> str:
         """Glob (relative to a jar root) matching every recipe JSON."""
@@ -34,27 +44,203 @@ class VersionProfile(CamelModel):
         return f"{self.tag_path.replace('{mod}', '*')}/**/*.json"
 
 
-# MVP target. See the block table in PROJECT.md §6.
-_PROFILES: dict[str, VersionProfile] = {
-    "1.21.1": VersionProfile(
-        profile="1.21.1",
+@dataclass(frozen=True)
+class Block:
+    """A range of Minecraft versions sharing parsing constants and a JDK."""
+
+    id: str
+    low: McVersion
+    high: McVersion  # inclusive upper bound of the block
+    jdk: str
+    item_format: Literal["components", "nbt"]
+    datapack_folders: Literal["singular", "plural"]
+    recipe_path: str
+    tag_path: str
+    tag_namespace: str
+    datapack_format: int
+    # Real releases inside the block, ascending; last = runner default / rep.
+    known: tuple[McVersion, ...]
+    runner_supported: bool = True
+
+    def representative(self) -> McVersion:
+        return self.known[-1]
+
+    def contains(self, v: McVersion) -> bool:
+        return self.low <= v <= self.high
+
+
+def _v(text: str) -> McVersion:
+    return McVersion.parse(text)
+
+
+# The five blocks of PROJECT.md §6, ascending. tag_path stays plural everywhere
+# (tags are always plural); only recipe_path flips singular/plural at 1.21.
+_BLOCKS: tuple[Block, ...] = (
+    Block(
+        id="1.18–1.20.4",
+        low=_v("1.18"),
+        high=_v("1.20.4"),
+        jdk="17",
+        item_format="nbt",
+        datapack_folders="plural",
+        recipe_path="data/{mod}/recipes",
+        tag_path="data/{mod}/tags/items",
+        tag_namespace="c",
+        datapack_format=26,
+        known=(_v("1.18"), _v("1.18.2"), _v("1.19.2"), _v("1.19.4"), _v("1.20.1"), _v("1.20.4")),
+    ),
+    Block(
+        id="1.20.5–1.20.6",
+        low=_v("1.20.5"),
+        high=_v("1.20.6"),
+        jdk="21",
+        item_format="components",
+        datapack_folders="plural",
+        recipe_path="data/{mod}/recipes",
+        tag_path="data/{mod}/tags/items",
+        tag_namespace="c",
+        datapack_format=41,
+        known=(_v("1.20.5"), _v("1.20.6")),
+    ),
+    Block(
+        id="1.21–1.21.1",
+        low=_v("1.21"),
+        high=_v("1.21.1"),
         jdk="21",
         item_format="components",
         datapack_folders="singular",
         recipe_path="data/{mod}/recipe",
         tag_path="data/{mod}/tags/items",
         tag_namespace="c",
-        fabric_api="0.116.11+1.21.1",
         datapack_format=48,
+        known=(_v("1.21"), _v("1.21.1")),
     ),
-}
+    Block(
+        id="1.21.2+",
+        low=_v("1.21.2"),
+        high=_v("1.21.999"),
+        jdk="21",
+        item_format="components",
+        datapack_folders="singular",
+        recipe_path="data/{mod}/recipe",
+        tag_path="data/{mod}/tags/items",
+        tag_namespace="c",
+        datapack_format=57,
+        known=(_v("1.21.2"), _v("1.21.4"), _v("1.21.5"), _v("1.21.6"), _v("1.21.8")),
+    ),
+    Block(
+        id="26.1+",
+        low=_v("26.1"),
+        high=McVersion(9998, 0, 0),
+        jdk="25",
+        item_format="components",
+        datapack_folders="singular",
+        recipe_path="data/{mod}/recipe",
+        tag_path="data/{mod}/tags/items",
+        tag_namespace="c",
+        datapack_format=88,
+        known=(_v("26.1"),),
+        # Bleeding edge: itzg java25 image / MC 26.x server may not exist yet, so
+        # the runner is gated here until the artifacts are published (static is fine).
+        runner_supported=False,
+    ),
+)
+
+
+def block_of(version: McVersion) -> Block | None:
+    """The block ``version`` falls in, or ``None`` if below the oldest block."""
+    for block in _BLOCKS:
+        if block.contains(version):
+            return block
+    return None
+
+
+def resolve_profile(version: str) -> VersionProfile:
+    """Build the :class:`VersionProfile` for a concrete version, via its block."""
+    parsed = McVersion.parse(version)
+    block = block_of(parsed)
+    if block is None:
+        raise KeyError(f"no version block for {version!r}")
+    return VersionProfile(
+        profile=str(parsed),
+        jdk=block.jdk,
+        item_format=block.item_format,
+        datapack_folders=block.datapack_folders,
+        recipe_path=block.recipe_path,
+        tag_path=block.tag_path,
+        tag_namespace=block.tag_namespace,
+        datapack_format=block.datapack_format,
+        runner_supported=block.runner_supported,
+    )
 
 
 def get_profile(name: str) -> VersionProfile:
-    """Resolve a profile by name, or raise ``KeyError`` if unknown."""
-    return _PROFILES[name]
+    """Resolve a profile by exact version (kept for the runner/back-compat callers)."""
+    return resolve_profile(name)
 
 
-def available_profiles() -> list[str]:
-    """Names of the profiles bundled with this build."""
-    return sorted(_PROFILES)
+def available_profiles() -> list[VersionCandidate]:
+    """The blocks offered in the manual-override picker (representative versions)."""
+    return [
+        VersionCandidate(version=str(b.representative()), block=b.id, mod_count=0) for b in _BLOCKS
+    ]
+
+
+def detect_version(constraints: list[tuple[str, object]]) -> VersionDetection:
+    """Derive the target version from each mod's ``depends.minecraft``.
+
+    The detected version is the **highest floor** any mod requires — the lowest
+    version on which the whole set provably runs. The block it maps to selects
+    the parsing constants. Detection is ``confident`` only when ≥90% of the
+    constraining mods are compatible with that version; otherwise the set spans
+    incompatible blocks and the caller must ask the user to pick.
+    """
+    parsed = [(mod_id, parse_constraint(raw)) for mod_id, raw in constraints]
+    constraining = [(mod_id, c) for mod_id, c in parsed if not c.is_any and c.ranges]
+
+    candidates = _block_candidates(constraining)
+
+    if not constraining:
+        return VersionDetection(
+            detected_version=None,
+            block=None,
+            jdk=None,
+            status="ambiguous",
+            confidence=0.0,
+            candidates=candidates,
+            outliers=[],
+        )
+
+    detected = max(c.floor() for _, c in constraining)
+    block = block_of(detected)
+    compatible = [mod_id for mod_id, c in constraining if c.contains(detected)]
+    outliers = [mod_id for mod_id, c in constraining if not c.contains(detected)]
+    confidence = len(compatible) / len(constraining)
+    status: Literal["confident", "ambiguous"] = (
+        "confident" if confidence >= 0.9 and block is not None else "ambiguous"
+    )
+    return VersionDetection(
+        detected_version=str(detected) if block is not None else None,
+        block=block.id if block is not None else None,
+        jdk=block.jdk if block is not None else None,
+        status=status,
+        confidence=round(confidence, 3),
+        candidates=candidates,
+        outliers=sorted(outliers),
+        runner_supported=block.runner_supported if block is not None else False,
+    )
+
+
+def _block_candidates(constraining: list[tuple[str, Constraint]]) -> list[VersionCandidate]:
+    """Per-block tally of constraining mods compatible with that block (picker)."""
+    out: list[VersionCandidate] = []
+    for block in _BLOCKS:
+        count = sum(1 for _, c in constraining if any(c.contains(v) for v in block.known))
+        if count:
+            out.append(
+                VersionCandidate(
+                    version=str(block.representative()), block=block.id, mod_count=count
+                )
+            )
+    out.sort(key=lambda candidate: candidate.mod_count, reverse=True)
+    return out

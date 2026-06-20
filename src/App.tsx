@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  AmbiguousVersionError,
   type BisectResult,
   bisectSet,
   fetchHealth,
@@ -8,6 +9,7 @@ import {
   type ScanResult,
   scanMods,
   testSet,
+  type VersionDetection,
 } from "./lib/api";
 import { ConflictsView, ModsView, Overview, ResolutionView, RuntimeView } from "./views";
 
@@ -34,6 +36,11 @@ export default function App() {
   const [bisectResult, setBisectResult] = useState<BisectResult | null>(null);
   const [bisecting, setBisecting] = useState(false);
   const [tab, setTab] = useState<Tab>("scan");
+  // The exact version used for the current scan (auto-detected or user-picked);
+  // threaded into runtime/resolve so they boot/generate for the right version.
+  const [version, setVersion] = useState<string | null>(null);
+  // Set when a scan is rejected as ambiguous (§6): drives the version picker.
+  const [pendingDetection, setPendingDetection] = useState<VersionDetection | null>(null);
 
   useEffect(() => {
     fetchHealth()
@@ -41,48 +48,60 @@ export default function App() {
       .catch(() => setHealth(null));
   }, []);
 
-  const runScan = useCallback(async (target: string) => {
+  // `pick` is the user's manual version choice from the ambiguity picker; when
+  // absent the backend auto-detects (and rejects an ambiguous set with 409).
+  const runScan = useCallback(async (target: string, pick?: string) => {
     const trimmed = target.trim();
     if (!trimmed) return;
     setScanning(true);
     setScanError(null);
+    setPendingDetection(null);
     setVerdict(null);
     setBisectResult(null);
     try {
-      setResult(await scanMods(trimmed));
+      const scan = await scanMods(trimmed, pick);
+      setResult(scan);
+      setVersion(scan.profile);
       setTab("overview");
     } catch (e) {
-      setScanError(e instanceof Error ? e.message : String(e));
       setResult(null);
       setTab("scan");
+      if (e instanceof AmbiguousVersionError) {
+        setPendingDetection(e.detection);
+      } else {
+        setScanError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setScanning(false);
     }
   }, []);
 
-  const runTest = useCallback(async (target: string) => {
-    setTesting(true);
-    setVerdict(null);
-    try {
-      setVerdict(await testSet(target));
-    } catch (e) {
-      setVerdict({
-        status: "error",
-        profile: "",
-        durationMs: 0,
-        cause: {
-          category: "startup_error",
-          summary: e instanceof Error ? e.message : String(e),
-          mods: [],
-          excerpt: null,
-        },
-        mixinExports: [],
-        logTail: null,
-      });
-    } finally {
-      setTesting(false);
-    }
-  }, []);
+  const runTest = useCallback(
+    async (target: string) => {
+      setTesting(true);
+      setVerdict(null);
+      try {
+        setVerdict(await testSet(target, version ?? undefined));
+      } catch (e) {
+        setVerdict({
+          status: "error",
+          profile: "",
+          durationMs: 0,
+          cause: {
+            category: "startup_error",
+            summary: e instanceof Error ? e.message : String(e),
+            mods: [],
+            excerpt: null,
+          },
+          mixinExports: [],
+          logTail: null,
+        });
+      } finally {
+        setTesting(false);
+      }
+    },
+    [version],
+  );
 
   // Native folder drop, Tauri only. In plain browser dev the internals are
   // absent and we fall back to the path input below.
@@ -114,25 +133,28 @@ export default function App() {
     return () => unlisten?.();
   }, [runScan]);
 
-  const runBisect = useCallback(async (target: string) => {
-    setBisecting(true);
-    setBisectResult(null);
-    try {
-      setBisectResult(await bisectSet(target));
-    } catch (e) {
-      setBisectResult({
-        status: "error",
-        profile: "",
-        members: [],
-        boots: 0,
-        durationMs: 0,
-        cause: null,
-        note: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setBisecting(false);
-    }
-  }, []);
+  const runBisect = useCallback(
+    async (target: string) => {
+      setBisecting(true);
+      setBisectResult(null);
+      try {
+        setBisectResult(await bisectSet(target, version ?? undefined));
+      } catch (e) {
+        setBisectResult({
+          status: "error",
+          profile: "",
+          members: [],
+          boots: 0,
+          durationMs: 0,
+          cause: null,
+          note: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        setBisecting(false);
+      }
+    },
+    [version],
+  );
 
   const onTest = useCallback(() => {
     if (result) void runTest(result.modsPath);
@@ -204,6 +226,33 @@ export default function App() {
             </section>
           )}
 
+          {tab === "scan" && pendingDetection && (
+            <section className="version-picker" aria-label="pick Minecraft version">
+              <p className="scan-error">
+                Couldn't pin a single Minecraft version — these mods span more than one. Pick the
+                target to scan:
+              </p>
+              <div className="picker-options">
+                {pendingDetection.candidates.map((c) => (
+                  <button
+                    key={c.block}
+                    type="button"
+                    className="btn-primary"
+                    disabled={scanning}
+                    onClick={() => void runScan(path, c.version)}
+                  >
+                    {c.block} · {c.version} ({c.modCount} mod{c.modCount === 1 ? "" : "s"})
+                  </button>
+                ))}
+              </div>
+              {pendingDetection.outliers.length > 0 && (
+                <p className="note">
+                  incompatible at the newest target: {pendingDetection.outliers.join(", ")}
+                </p>
+              )}
+            </section>
+          )}
+
           {scanError && <p className="scan-error">scan failed: {scanError}</p>}
 
           {result && tab !== "scan" && (
@@ -223,9 +272,13 @@ export default function App() {
                   onBisect={onBisect}
                   bisecting={bisecting}
                   bisectResult={bisectResult}
+                  runnerSupported={result.detection?.runnerSupported ?? true}
+                  block={result.detection?.block ?? null}
                 />
               )}
-              {tab === "resolution" && <ResolutionView modsPath={result.modsPath} />}
+              {tab === "resolution" && (
+                <ResolutionView modsPath={result.modsPath} version={version ?? undefined} />
+              )}
             </div>
           )}
         </div>
