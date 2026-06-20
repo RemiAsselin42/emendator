@@ -148,9 +148,41 @@ def test_detect_ambiguous_when_no_constraints() -> None:
     assert det.status == "ambiguous"
     assert det.detected_version is None
     assert det.confidence == 0.0
+    # The picker must still offer every block to choose from (not an empty list).
+    assert {c.block for c in det.candidates} == {
+        "1.18–1.20.4",
+        "1.20.5–1.20.6",
+        "1.21–1.21.1",
+        "1.21.2+",
+        "26.1+",
+    }
 
 
 def test_detect_runner_gated_for_future_block() -> None:
     det = detect_version([("a", ">=26.1")])
     assert det.detected_version == "26.1"
     assert det.runner_supported is False
+
+
+def test_block_candidates_cover_constraint_above_latest_known() -> None:
+    # ">=1.21.9" sits above the newest known 1.21.x but still inside the 1.21.2+ block.
+    det = detect_version([("a", ">=1.21.9")])
+    blocks = {c.block for c in det.candidates}
+    assert "1.21.2+" in blocks
+
+
+def test_forced_version_reflects_picked_block() -> None:
+    # Mods point at 1.21.x, but the user forces the old NBT block.
+    det = detect_version([("a", ">=1.21"), ("b", ">=1.21")], forced="1.20.1")
+    assert det.status == "confident"
+    assert det.detected_version == "1.20.1"
+    assert det.block == "1.18–1.20.4"
+    assert det.jdk == "17"
+    assert det.outliers == ["a", "b"]  # neither supports 1.20.1
+
+
+def test_or_pipe_constraint() -> None:
+    c = parse_constraint("1.20.1 || >=1.21")
+    assert c.contains(McVersion.parse("1.20.1"))
+    assert c.contains(McVersion.parse("1.21.5"))
+    assert not c.contains(McVersion.parse("1.20.4"))

@@ -140,7 +140,12 @@ def test_scan_endpoint_honors_explicit_version(tmp_path: Path) -> None:
     _make_jar(tmp_path, "new.jar", {"id": "new", "depends": {"minecraft": ">=1.21"}})
     res = client.post("/mods/scan", json={"path": str(tmp_path), "version": "1.20.6"})
     assert res.status_code == 200
-    assert res.json()["profile"] == "1.20.6"
+    body = res.json()
+    assert body["profile"] == "1.20.6"
+    # Detection must reflect the picked version, not the auto-detected one.
+    assert body["detection"]["block"] == "1.20.5–1.20.6"
+    assert body["detection"]["status"] == "confident"
+    assert "new" in body["detection"]["outliers"]  # >=1.21 mod can't run on 1.20.6
 
 
 def test_detect_endpoint(tmp_path: Path) -> None:

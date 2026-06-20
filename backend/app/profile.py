@@ -13,6 +13,7 @@ maps to, refusing to guess when the set spans incompatible blocks.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -186,7 +187,9 @@ def available_profiles() -> list[VersionCandidate]:
     ]
 
 
-def detect_version(constraints: list[tuple[str, object]]) -> VersionDetection:
+def detect_version(
+    constraints: Sequence[tuple[str, object]], forced: str | None = None
+) -> VersionDetection:
     """Derive the target version from each mod's ``depends.minecraft``.
 
     The detected version is the **highest floor** any mod requires — the lowest
@@ -194,11 +197,19 @@ def detect_version(constraints: list[tuple[str, object]]) -> VersionDetection:
     the parsing constants. Detection is ``confident`` only when ≥90% of the
     constraining mods are compatible with that version; otherwise the set spans
     incompatible blocks and the caller must ask the user to pick.
+
+    ``forced`` short-circuits the heuristic with the user's manual pick: the
+    result then reflects *that* version's block (and which mods it leaves
+    behind), so downstream gating (e.g. runtime support) matches what is used.
     """
     parsed = [(mod_id, parse_constraint(raw)) for mod_id, raw in constraints]
     constraining = [(mod_id, c) for mod_id, c in parsed if not c.is_any and c.ranges]
 
-    candidates = _block_candidates(constraining)
+    if forced is not None:
+        return _forced_detection(forced, constraining)
+
+    # Fall back to every block when nothing constrains, so the picker has options.
+    candidates = _block_candidates(constraining) or available_profiles()
 
     if not constraining:
         return VersionDetection(
@@ -231,11 +242,31 @@ def detect_version(constraints: list[tuple[str, object]]) -> VersionDetection:
     )
 
 
+def _forced_detection(forced: str, constraining: list[tuple[str, Constraint]]) -> VersionDetection:
+    """Detection reflecting an explicit user-picked version (its block, outliers)."""
+    parsed = McVersion.parse(forced)
+    block = block_of(parsed)
+    if block is None:
+        raise KeyError(f"no version block for {forced!r}")
+    outliers = [mod_id for mod_id, c in constraining if not c.contains(parsed)]
+    confidence = (len(constraining) - len(outliers)) / len(constraining) if constraining else 1.0
+    return VersionDetection(
+        detected_version=str(parsed),
+        block=block.id,
+        jdk=block.jdk,
+        status="confident",
+        confidence=round(confidence, 3),
+        candidates=_block_candidates(constraining) or available_profiles(),
+        outliers=sorted(outliers),
+        runner_supported=block.runner_supported,
+    )
+
+
 def _block_candidates(constraining: list[tuple[str, Constraint]]) -> list[VersionCandidate]:
-    """Per-block tally of constraining mods compatible with that block (picker)."""
+    """Per-block tally of constraining mods whose range overlaps that block (picker)."""
     out: list[VersionCandidate] = []
     for block in _BLOCKS:
-        count = sum(1 for _, c in constraining if any(c.contains(v) for v in block.known))
+        count = sum(1 for _, c in constraining if c.intersects(block.low, block.high))
         if count:
             out.append(
                 VersionCandidate(

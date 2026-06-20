@@ -256,8 +256,9 @@ export default function App() {
           {tab === "scan" && pendingDetection && (
             <section className="version-picker" aria-label="pick Minecraft version">
               <p className="scan-error">
-                Couldn't pin a single Minecraft version — these mods span more than one. Pick the
-                target to scan:
+                Couldn't pin the Minecraft version automatically
+                {pendingDetection.candidates.length > 0 ? " — these mods don't agree on one." : "."}{" "}
+                Pick the target to scan:
               </p>
               <div className="picker-options">
                 {pendingDetection.candidates.map((c) => (

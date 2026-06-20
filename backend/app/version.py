@@ -79,6 +79,10 @@ class Constraint:
     def contains(self, v: McVersion) -> bool:
         return self.is_any or any(r.contains(v) for r in self.ranges)
 
+    def intersects(self, low: McVersion, high: McVersion) -> bool:
+        """Does any accepted version fall within the inclusive ``[low, high]``?"""
+        return self.is_any or any(r.low <= high and low <= r.high for r in self.ranges)
+
     def floor(self) -> McVersion:
         """Lowest version this constraint accepts (``_MIN`` if unbounded below)."""
         if self.is_any or not self.ranges:
@@ -171,6 +175,16 @@ def parse_constraint(raw: object) -> Constraint:
     text = str(raw).strip()
     if text.lower() in _ANY_TOKENS:
         return _ANY
+    # "||" is OR (each side an independent range); commas/spaces inside are AND.
+    or_parts = [part.strip() for part in text.split("||")]
+    if len(or_parts) > 1:
+        ranges: list[_Range] = []
+        for part in or_parts:
+            sub = parse_constraint(part)
+            if sub.is_any:
+                return _ANY
+            ranges.extend(sub.ranges)
+        return Constraint(tuple(ranges)) if ranges else _ANY
     tokens = [t for t in re.split(r"[\s,]+", text) if t]
     try:
         return Constraint((_intersect_tokens(tokens),))
