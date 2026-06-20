@@ -75,6 +75,45 @@ export interface ScanResult {
   counts: ScanCounts;
 }
 
+// --- Phase 2: headless runner (PROJECT.md §8) ----------------------------
+
+export type RunStatus = "ok" | "crash" | "timeout" | "error";
+
+export interface RunCause {
+  category: string;
+  summary: string;
+  mods: string[];
+  excerpt: string | null;
+}
+
+export interface RunVerdict {
+  status: RunStatus;
+  profile: string;
+  durationMs: number;
+  cause: RunCause | null;
+  mixinExports: string[];
+  logTail: string | null;
+}
+
+export async function testSet(path: string): Promise<RunVerdict> {
+  const res = await fetch(`${BASE}/runner/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  if (!res.ok) {
+    let detail = `Backend returned ${res.status}`;
+    try {
+      const body = (await res.json()) as { detail?: string };
+      if (body.detail) detail = body.detail;
+    } catch {
+      // non-JSON error body; keep the status-based message
+    }
+    throw new Error(detail);
+  }
+  return res.json() as Promise<RunVerdict>;
+}
+
 export async function scanMods(path: string): Promise<ScanResult> {
   const res = await fetch(`${BASE}/mods/scan`, {
     method: "POST",

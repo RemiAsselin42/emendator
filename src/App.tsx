@@ -3,8 +3,10 @@ import {
   type Conflict,
   fetchHealth,
   type HealthResponse,
+  type RunVerdict,
   type ScanResult,
   scanMods,
+  testSet,
 } from "./lib/api";
 
 const CONFLICT_LABEL: Record<Conflict["type"], string> = {
@@ -39,6 +41,8 @@ export default function App() {
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [verdict, setVerdict] = useState<RunVerdict | null>(null);
+  const [testing, setTesting] = useState(false);
 
   useEffect(() => {
     fetchHealth()
@@ -51,6 +55,7 @@ export default function App() {
     if (!trimmed) return;
     setScanning(true);
     setScanError(null);
+    setVerdict(null);
     try {
       setResult(await scanMods(trimmed));
     } catch (e) {
@@ -58,6 +63,30 @@ export default function App() {
       setResult(null);
     } finally {
       setScanning(false);
+    }
+  }, []);
+
+  const runTest = useCallback(async (target: string) => {
+    setTesting(true);
+    setVerdict(null);
+    try {
+      setVerdict(await testSet(target));
+    } catch (e) {
+      setVerdict({
+        status: "error",
+        profile: "",
+        durationMs: 0,
+        cause: {
+          category: "startup_error",
+          summary: e instanceof Error ? e.message : String(e),
+          mods: [],
+          excerpt: null,
+        },
+        mixinExports: [],
+        logTail: null,
+      });
+    } finally {
+      setTesting(false);
     }
   }, []);
 
@@ -154,6 +183,48 @@ export default function App() {
               </span>
             )}
           </div>
+
+          <section className="runner">
+            <button
+              className="btn-primary"
+              type="button"
+              onClick={() => void runTest(result.modsPath)}
+              disabled={testing}
+            >
+              {testing ? "booting…" : "Test this set (headless boot)"}
+            </button>
+            {testing && (
+              <span className="note"> a real boot takes minutes; needs Docker running</span>
+            )}
+          </section>
+
+          {verdict && (
+            <div className="panel">
+              <h2 className="panel-title">Runtime verdict</h2>
+              <p>
+                <span className={`run-${verdict.status}`}>{verdict.status.toUpperCase()}</span>
+                {" · "}
+                {(verdict.durationMs / 1000).toFixed(1)}s
+                {verdict.mixinExports.length > 0 &&
+                  ` · ${verdict.mixinExports.length} mixin-transformed classes (ground truth)`}
+              </p>
+              {verdict.cause && (
+                <>
+                  <p className="note">
+                    {verdict.cause.category}: {verdict.cause.summary}
+                    {verdict.cause.mods.length > 0 && ` — ${verdict.cause.mods.join(", ")}`}
+                  </p>
+                  {verdict.cause.excerpt && <pre className="log">{verdict.cause.excerpt}</pre>}
+                </>
+              )}
+              {verdict.logTail && verdict.status !== "error" && (
+                <details>
+                  <summary>log tail</summary>
+                  <pre className="log">{verdict.logTail}</pre>
+                </details>
+              )}
+            </div>
+          )}
 
           {result.conflicts.length > 0 && (
             <div className="panel">
