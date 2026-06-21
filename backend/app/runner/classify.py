@@ -1,8 +1,11 @@
-"""Classify a headless Fabric server boot from its log output.
+"""Classify a headless server boot (any loader) from its log output.
 
 Pure functions over captured text (``latest.log`` + optional crash report), so
 they are fully unit-testable without Docker. We reuse mclo.gs / Crash Assistant
 style signatures rather than reinventing error classification (PROJECT.md §12).
+The clean-start line and the mixin signatures are loader-agnostic (vanilla and
+SpongePowered Mixin underpin all loaders); Forge/NeoForge add their own
+dependency-resolution wording, handled by extra signatures below.
 
 The orchestrator decides the terminal :data:`RunStatus` (ok / crash / timeout)
 from how the container ended; this module extracts the *cause* of a failure and
@@ -35,8 +38,19 @@ _SIGNATURES: list[tuple[CrashCategory, re.Pattern[str], str]] = [
         "A required dependency is missing.",
     ),
     (
+        # Forge/NeoForge (FML) phrasing: a per-mod line under the missing-deps banner.
+        "missing_dependency",
+        re.compile(r"Mod ID: '([\w.-]+)',\s*Requested by:", re.IGNORECASE),
+        "A required dependency is missing or the wrong version (Forge/NeoForge).",
+    ),
+    (
+        "missing_dependency",
+        re.compile(r"Missing or unsupported mandatory dependencies", re.IGNORECASE),
+        "Required dependencies are missing or the wrong version (Forge/NeoForge).",
+    ),
+    (
         "duplicate_mod",
-        re.compile(r"[Dd]uplicate mod(?:s)?[:\s]+'?([\w.-]+)'?"),
+        re.compile(r"(?:Found )?[Dd]uplicate mod(?:s)?[:\s]+'?([\w.-]+)'?"),
         "The same mod id is provided by more than one jar.",
     ),
     (

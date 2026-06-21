@@ -1,12 +1,13 @@
-"""Ingest a Fabric ``mods/`` folder and run static conflict detection.
+"""Ingest a mod set (Fabric/Quilt/Forge/NeoForge) and run static conflict detection.
 
-Each ``.jar`` is opened **once**: its ``fabric.mod.json`` becomes a
-:class:`Mod`, and the files the detectors need (recipes, item tags, mixin
-target classes — located via the :class:`VersionProfile`, never hardcoded) are
-read into a :class:`JarIndex`. Detection then runs purely in memory.
+Each ``.jar`` is opened **once**: its loader metadata becomes a :class:`Mod`
+(see :mod:`app.analyzer.metadata`), and the files the detectors need (recipes,
+item tags, mixin target classes — located via the :class:`VersionProfile`, never
+hardcoded) are read into a :class:`JarIndex`. Detection then runs purely in
+memory.
 
-Jars without ``fabric.mod.json`` or that fail to parse are non-fatal: they are
-collected as :class:`ScanError`. Only top-level jars are scanned (nested
+Jars without recognized loader metadata, or that fail to parse, are non-fatal:
+they are collected as :class:`ScanError`. Only top-level jars are scanned (nested
 ``META-INF/jars`` deferred).
 """
 
@@ -19,9 +20,9 @@ from pathlib import Path
 from typing import Any
 
 from app.analyzer.detectors import JarIndex, detect_conflicts
+from app.analyzer.metadata import FABRIC_METADATA, parse_mod_metadata
 from app.analyzer.mixin_targets import extract_mixin_targets
 from app.models import (
-    Environment,
     Mod,
     ScanCounts,
     ScanError,
@@ -30,63 +31,8 @@ from app.models import (
 )
 from app.profile import VersionProfile, resolve_profile
 
-FABRIC_METADATA = "fabric.mod.json"
 CLIENT_REASON = "environment:client not loaded by server boot"
-_VALID_ENVIRONMENTS: tuple[Environment, ...] = ("server", "client", "*")
 _MIXIN_SECTIONS = ("mixins", "client", "server")
-
-
-def _coerce_environment(value: object) -> Environment:
-    """Map the raw ``environment`` field to the contract; default to ``"*"``."""
-    if value in _VALID_ENVIRONMENTS:
-        return value  # type: ignore[return-value]
-    return "*"
-
-
-def _coerce_mc_version(depends: object) -> str | None:
-    """Pull the Minecraft version constraint out of ``depends`` (str or list)."""
-    if not isinstance(depends, dict):
-        return None
-    mc = depends.get("minecraft")
-    if isinstance(mc, list):
-        mc = mc[0] if mc else None
-    if mc is None:
-        return None
-    return mc if isinstance(mc, str) else str(mc)
-
-
-def _metadata_to_mod(raw: bytes, jar_name: str) -> tuple[Mod | None, ScanError | None]:
-    """Parse ``fabric.mod.json`` bytes into a :class:`Mod`."""
-    try:
-        # strict=False tolerates literal control characters (newlines/tabs) that
-        # real fabric.mod.json files embed in string values; Fabric's own loader
-        # is lenient here, so we must be too (e.g. Debugify).
-        data = json.loads(raw, strict=False)
-    except json.JSONDecodeError as exc:
-        return None, ScanError(jar=jar_name, reason=f"invalid fabric.mod.json: {exc}")
-
-    if not isinstance(data, dict):
-        return None, ScanError(jar=jar_name, reason="fabric.mod.json is not an object")
-
-    mod_id = data.get("id")
-    if not isinstance(mod_id, str) or not mod_id:
-        return None, ScanError(jar=jar_name, reason="fabric.mod.json missing 'id'")
-
-    depends = data.get("depends")
-    version = data.get("version")
-    name = data.get("name")
-    provides = data.get("provides")
-    mod = Mod(
-        id=mod_id,
-        name=name if isinstance(name, str) else None,
-        version=str(version) if version is not None else None,
-        mc_version=_coerce_mc_version(depends),
-        environment=_coerce_environment(data.get("environment")),
-        depends=depends if isinstance(depends, dict) else {},
-        provides=[p for p in provides if isinstance(p, str)] if isinstance(provides, list) else [],
-        jar=jar_name,
-    )
-    return mod, None
 
 
 def _matches_template(name: str, template: str) -> bool:
@@ -212,13 +158,7 @@ def build_jar_index(
         sha256 = hashlib.sha256(jar_path.read_bytes()).hexdigest()
         with zipfile.ZipFile(jar_path) as zf:
             names = zf.namelist()
-            try:
-                raw = zf.read(FABRIC_METADATA)
-            except KeyError:
-                return None, ScanError(
-                    jar=jar_path.name, reason="no fabric.mod.json (not a Fabric mod)"
-                )
-            mod, error = _metadata_to_mod(raw, jar_path.name)
+            mod, error = parse_mod_metadata(zf, names, jar_path.name)
             if error is not None:
                 return None, error
             assert mod is not None
@@ -241,32 +181,25 @@ def build_jar_index(
     return index, None
 
 
-def read_mods_metadata(folder: Path) -> tuple[list[Mod], list[ScanError]]:
+def read_jars_metadata(jars: list[Path]) -> tuple[list[Mod], list[ScanError]]:
     """Cheap first pass for version detection: read only each jar's metadata.
 
-    Opens every top-level ``.jar`` and parses just its ``fabric.mod.json`` (no
-    recipes/tags/mixins), so :func:`app.profile.detect_version` can choose a
-    profile *before* the full, profile-dependent scan runs.
+    Opens every jar and parses just its loader metadata (no recipes/tags/mixins),
+    so :func:`app.profile.detect_version` can choose a profile *before* the full,
+    profile-dependent scan runs.
     """
     mods: list[Mod] = []
     errors: list[ScanError] = []
-    for jar_path in sorted(folder.glob("*.jar")):
+    for jar_path in jars:
         try:
             with zipfile.ZipFile(jar_path) as zf:
-                try:
-                    raw = zf.read(FABRIC_METADATA)
-                except KeyError:
-                    errors.append(
-                        ScanError(jar=jar_path.name, reason="no fabric.mod.json (not a Fabric mod)")
-                    )
-                    continue
+                mod, error = parse_mod_metadata(zf, zf.namelist(), jar_path.name)
         except zipfile.BadZipFile:
             errors.append(ScanError(jar=jar_path.name, reason="not a valid jar/zip"))
             continue
         except OSError as exc:
             errors.append(ScanError(jar=jar_path.name, reason=f"could not read jar: {exc}"))
             continue
-        mod, error = _metadata_to_mod(raw, jar_path.name)
         if error is not None:
             errors.append(error)
         elif mod is not None:
@@ -274,16 +207,23 @@ def read_mods_metadata(folder: Path) -> tuple[list[Mod], list[ScanError]]:
     return mods, errors
 
 
-def scan_mods_folder(folder: Path, version: str) -> ScanResult:
-    """Scan every top-level ``.jar`` in ``folder`` and detect static conflicts."""
-    version_profile = resolve_profile(version)
-    jars = sorted(folder.glob("*.jar"))
+def read_mods_metadata(folder: Path) -> tuple[list[Mod], list[ScanError]]:
+    """:func:`read_jars_metadata` over every top-level ``.jar`` in ``folder``."""
+    return read_jars_metadata(sorted(folder.glob("*.jar")))
+
+
+def scan_jars(jars: list[Path], profile: VersionProfile, mods_path: str = "") -> ScanResult:
+    """Scan an explicit list of jars and detect static conflicts.
+
+    The unit the instance layer drives over a resolved ``mods/`` folder;
+    :func:`scan_mods_folder` is a thin wrapper that globs a folder.
+    """
     indexes: list[JarIndex] = []
     untestable: list[UntestableMod] = []
     errors: list[ScanError] = []
 
     for jar_path in jars:
-        index, error = build_jar_index(jar_path, version_profile)
+        index, error = build_jar_index(jar_path, profile)
         if error is not None:
             errors.append(error)
             continue
@@ -292,7 +232,7 @@ def scan_mods_folder(folder: Path, version: str) -> ScanResult:
         if index.mod.environment == "client":
             untestable.append(UntestableMod(id=index.mod.id, reason=CLIENT_REASON))
 
-    conflicts = detect_conflicts(indexes, version_profile)
+    conflicts = detect_conflicts(indexes, profile)
     mods = [index.mod for index in indexes]
     counts = ScanCounts(
         total=len(jars),
@@ -303,11 +243,16 @@ def scan_mods_folder(folder: Path, version: str) -> ScanResult:
         conflicts=len(conflicts),
     )
     return ScanResult(
-        profile=version_profile.profile,
-        mods_path=str(folder),
+        profile=profile.profile,
+        mods_path=mods_path,
         mods=mods,
         untestable=untestable,
         conflicts=conflicts,
         errors=errors,
         counts=counts,
     )
+
+
+def scan_mods_folder(folder: Path, version: str) -> ScanResult:
+    """Scan every top-level ``.jar`` in ``folder`` and detect static conflicts."""
+    return scan_jars(sorted(folder.glob("*.jar")), resolve_profile(version), str(folder))

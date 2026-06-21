@@ -16,8 +16,23 @@ from typing import Any
 from app.models import Conflict, Mod
 from app.profile import VersionProfile
 
-# Dependency ids provided by the runtime itself, never shipped as a mod jar.
-_ENV_PROVIDED = {"minecraft", "java", "fabricloader", "fabric-loader"}
+# Dependency ids provided by the runtime/loader itself, never shipped as a mod
+# jar (across loaders: Fabric, Quilt, Forge, NeoForge).
+_ENV_PROVIDED = {
+    "minecraft",
+    "java",
+    "fabricloader",
+    "fabric-loader",
+    "quilt_loader",
+    "forge",
+    "neoforge",
+    "fml",
+    "javafml",
+}
+
+# Conventional tag namespaces shared across loaders ("c" since 1.21 and on
+# Fabric; "forge" on older Forge). Tag overlaps only matter in these.
+_CONVENTIONAL_NAMESPACES = frozenset({"c", "forge"})
 
 
 @dataclass
@@ -107,12 +122,15 @@ def _tag_values(tag_json: dict[str, Any]) -> list[str]:
 
 
 def detect_tag_overlaps(indexes: list[JarIndex], profile: VersionProfile) -> list[Conflict]:
-    """≥2 mods feeding the same conventional (``c:``) item tag = content dup."""
+    """≥2 mods feeding the same conventional (``c:``/``forge:``) item tag = content dup."""
+    # Accept every conventional namespace, not just the profile's default, so a
+    # mixed-loader pack (Fabric `c:` + older Forge `forge:`) isn't missed.
+    namespaces = _CONVENTIONAL_NAMESPACES | {profile.tag_namespace}
     # tag id -> {mod id -> contributed item ids}
     by_tag: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     for index in indexes:
         for path, tag_json in index.item_tags.items():
-            tag_id = _tag_id_from_path(path, profile)
+            tag_id = _tag_id_from_path(path, namespaces)
             if tag_id is None:
                 continue
             by_tag[tag_id][index.mod.id].update(_tag_values(tag_json))
@@ -137,14 +155,14 @@ def detect_tag_overlaps(indexes: list[JarIndex], profile: VersionProfile) -> lis
     return conflicts
 
 
-def _tag_id_from_path(path: str, profile: VersionProfile) -> str | None:
+def _tag_id_from_path(path: str, namespaces: frozenset[str] | set[str]) -> str | None:
     """``data/c/tags/items/ingots/tin.json`` -> ``c:ingots/tin`` (conventional only)."""
     parts = path.split("/")
     # data / <namespace> / tags / items / <rel...>.json
     if len(parts) < 6 or parts[0] != "data" or parts[2] != "tags" or parts[3] != "items":
         return None
     namespace = parts[1]
-    if namespace != profile.tag_namespace:
+    if namespace not in namespaces:
         return None
     rel = "/".join(parts[4:])
     if rel.endswith(".json"):

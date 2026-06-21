@@ -16,13 +16,20 @@ from pydantic.alias_generators import to_camel
 # environment as declared in fabric.mod.json; "*" means both sides.
 Environment = Literal["server", "client", "*"]
 
-# Conflict taxonomy (PROJECT.md §7, §9).
+# Mod loader a jar targets, from the metadata file it ships (fabric.mod.json,
+# quilt.mod.json, META-INF/(neoforge.)mods.toml). "unknown" = unrecognized jar.
+Loader = Literal["fabric", "quilt", "forge", "neoforge", "unknown"]
+
+# Conflict taxonomy (PROJECT.md §7, §9). The first five are mod conflicts; the
+# last two are content-pack overrides (resource packs / datapacks).
 ConflictType = Literal[
     "tag_overlap",
     "recipe_collision",
     "mixin_overlap",
     "dependency",
     "duplicate_jar",
+    "asset_override",
+    "datapack_override",
 ]
 Severity = Literal["info", "warning", "error"]
 DetectedBy = Literal["static", "runtime"]
@@ -35,16 +42,22 @@ class CamelModel(BaseModel):
 
 
 class Mod(CamelModel):
-    """One Fabric mod resolved from a jar's ``fabric.mod.json``."""
+    """One mod resolved from a jar's loader metadata (Fabric/Quilt/Forge/NeoForge)."""
 
     id: str
     name: str | None = None
     version: str | None = None
     mc_version: str | None = None
     environment: Environment = "*"
+    loader: Loader = "unknown"
     depends: dict[str, str | list[str]] = {}
     provides: list[str] = []
     jar: str
+    # Online enrichment (best-effort; null when not looked up / not found).
+    provider: Literal["modrinth", "curseforge"] | None = None
+    homepage: str | None = None
+    latest_version: str | None = None
+    update_available: bool | None = None
 
 
 class UntestableMod(CamelModel):
@@ -174,6 +187,8 @@ class RunRequest(CamelModel):
     path: str
     # Exact version to boot (itzg VERSION); when absent the backend auto-detects.
     version: str | None = None
+    # Which loader to boot (itzg TYPE); when absent it's detected from the jars.
+    loader: Loader | None = None
     # Optional per-run overrides (defaults come from the version profile).
     timeout_seconds: int = 300
     memory: str = "3G"
@@ -250,3 +265,120 @@ class ExportResult(CamelModel):
 
     out_dir: str
     written: list[str] = []
+
+
+# --- Instances (launcher-native ingestion) -------------------------------
+
+# Where the dropped folder comes from. "raw_mods" = a bare mods/ folder (the
+# historical input); the others are launcher instances we recognise by their
+# manifest and whose content sub-folders we locate automatically.
+InstanceSource = Literal["curseforge", "modrinth", "prism", "multimc", "vanilla", "raw_mods"]
+
+
+class InstanceFolders(CamelModel):
+    """Resolved absolute paths of the content sub-folders found in an instance.
+
+    Each is ``None`` when the instance has no such folder; ``datapacks`` holds
+    every datapack directory found (a global ``datapacks/`` plus each world's
+    ``saves/<world>/datapacks``).
+    """
+
+    mods: str | None = None
+    resourcepacks: str | None = None
+    shaderpacks: str | None = None
+    config: str | None = None
+    datapacks: list[str] = []
+
+
+class Instance(CamelModel):
+    """A launcher instance (or bare mods folder) resolved from a dropped path.
+
+    Carries the launcher-declared metadata (name, loader, MC version) when a
+    manifest is present, plus the located content folders and quick counts so the
+    front can summarise the pack before a full scan.
+    """
+
+    root: str
+    source: InstanceSource
+    name: str | None = None
+    loader: Loader = "unknown"
+    mc_version: str | None = None
+    folders: InstanceFolders = InstanceFolders()
+    mod_count: int = 0
+    resourcepack_count: int = 0
+    datapack_count: int = 0
+    shaderpack_count: int = 0
+
+
+# --- Content packs beyond mods (resource packs / datapacks / shaders) -----
+
+
+class ResourcePack(CamelModel):
+    """A resource pack (texture pack): a ``.zip`` or folder with ``pack.mcmeta``."""
+
+    name: str
+    pack_format: int | None = None
+    description: str | None = None
+    asset_count: int = 0
+    source: Literal["zip", "dir"] = "dir"
+
+
+class Datapack(CamelModel):
+    """A datapack found in a global ``datapacks/`` or a world's ``datapacks/``."""
+
+    name: str
+    location: str  # the containing world (or instance) name, for display
+    pack_format: int | None = None
+    description: str | None = None
+    data_count: int = 0
+    source: Literal["zip", "dir"] = "dir"
+
+
+class ShaderPack(CamelModel):
+    """A shader pack (Iris/OptiFine): opaque, inventoried only."""
+
+    name: str
+    source: Literal["zip", "dir"] = "dir"
+
+
+# --- Registry index (items/blocks the pack adds) -------------------------
+
+
+class ItemEntry(CamelModel):
+    """One registered item or block, from a jar's lang/model assets."""
+
+    id: str  # "namespace:name"
+    display_name: str | None = None  # from lang en_us.json when available
+    kind: Literal["item", "block"] = "item"
+    mod: str  # owning namespace (≈ the mod id)
+
+
+class RegistryIndex(CamelModel):
+    """The aggregate of items/blocks every mod in the set registers.
+
+    Approximate by design: built from ``lang``/``models`` assets, so items
+    registered purely in code without a lang key or item model are not captured
+    (documented in the UI). Good enough to browse what a pack adds.
+    """
+
+    items: list[ItemEntry] = []
+    total: int = 0
+    item_count: int = 0
+    block_count: int = 0
+
+
+class InstanceReport(CamelModel):
+    """Full analysis of an instance: the mod conflict map plus everything else.
+
+    ``mods`` is the same :class:`ScanResult` ``/mods/scan`` returns; the other
+    sections cover the content folders located by instance detection.
+    """
+
+    instance: Instance
+    mods: ScanResult
+    resourcepacks: list[ResourcePack] = []
+    datapacks: list[Datapack] = []
+    shaderpacks: list[ShaderPack] = []
+    resourcepack_conflicts: list[Conflict] = []
+    datapack_conflicts: list[Conflict] = []
+    items: RegistryIndex = RegistryIndex()
