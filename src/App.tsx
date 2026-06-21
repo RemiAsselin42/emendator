@@ -4,7 +4,6 @@ import {
   type BisectResult,
   bisectSet,
   fetchHealth,
-  type HealthResponse,
   listProfiles,
   type RunVerdict,
   type ScanResult,
@@ -13,21 +12,24 @@ import {
   type VersionCandidate,
   type VersionDetection,
 } from "./lib/api";
-import { ConflictsView, ModsView, Overview, ResolutionView, RuntimeView } from "./views";
+import { isRecipeCollision } from "./lib/conflicts";
+import { ConflictsView, Overview, RecipesView, ResolutionView, RuntimeView } from "./views";
 
-type Tab = "scan" | "overview" | "conflicts" | "mods" | "runtime" | "resolution";
+type Tab = "scan" | "overview" | "conflicts" | "recipes" | "runtime" | "resolution";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "scan", label: "Scan" },
   { id: "overview", label: "Overview" },
   { id: "conflicts", label: "Conflicts" },
-  { id: "mods", label: "Mods" },
+  { id: "recipes", label: "Recipes" },
   { id: "runtime", label: "Runtime" },
   { id: "resolution", label: "Resolution" },
 ];
 
 export default function App() {
-  const [health, setHealth] = useState<HealthResponse | null>(null);
+  // Only true once a health check has actually failed — stays false during the
+  // first in-flight check so the "unreachable" toast never flashes on boot.
+  const [backendDown, setBackendDown] = useState(false);
   const [path, setPath] = useState("");
   const [result, setResult] = useState<ScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -46,10 +48,24 @@ export default function App() {
   // Version blocks offered in the manual override (§6).
   const [profiles, setProfiles] = useState<VersionCandidate[]>([]);
 
+  // Poll the sidecar so the toast reflects the live state: it appears when a
+  // check fails and clears itself when the backend comes back.
   useEffect(() => {
-    fetchHealth()
-      .then(setHealth)
-      .catch(() => setHealth(null));
+    let active = true;
+    const check = () => {
+      fetchHealth()
+        .then(() => active && setBackendDown(false))
+        .catch(() => active && setBackendDown(true));
+    };
+    check();
+    const id = window.setInterval(check, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  useEffect(() => {
     listProfiles()
       .then((p) => setProfiles(Array.isArray(p) ? p : []))
       .catch(() => setProfiles([]));
@@ -186,18 +202,16 @@ export default function App() {
     });
   }
 
+  // Recipe collisions moved to their own tab, so the Conflicts badge counts only
+  // what that tab still shows.
+  const recipeCount = result ? result.conflicts.filter(isRecipeCollision).length : 0;
+  const conflictCount = result ? result.counts.conflicts - recipeCount : 0;
+
   return (
     <main className="container">
       <header className="header">
         <h1>Emendator</h1>
         <p className="tagline">Fabric modpack conflict analyzer</p>
-        <p className="health">
-          {health ? (
-            <span className="up">backend up</span>
-          ) : (
-            <span className="down">backend unreachable — start the sidecar</span>
-          )}
-        </p>
 
         {result && (
           <div className="version-bar">
@@ -238,8 +252,8 @@ export default function App() {
               disabled={t.id !== "scan" && !result}
             >
               {t.label}
-              {result && t.id === "conflicts" && ` (${result.counts.conflicts})`}
-              {result && t.id === "mods" && ` (${result.counts.mods})`}
+              {result && t.id === "conflicts" && ` (${conflictCount})`}
+              {result && t.id === "recipes" && ` (${recipeCount})`}
             </button>
           ))}
         </nav>
@@ -308,13 +322,11 @@ export default function App() {
 
           {result && tab !== "scan" && (
             <div className="panel-content">
-              {tab === "overview" && (
-                <Overview result={result} verdict={verdict} onTest={onTest} testing={testing} />
-              )}
+              {tab === "overview" && <Overview result={result} onNavigate={setTab} />}
               {tab === "conflicts" && (
                 <ConflictsView conflicts={result.conflicts} verdict={verdict} />
               )}
-              {tab === "mods" && <ModsView result={result} />}
+              {tab === "recipes" && <RecipesView conflicts={result.conflicts} />}
               {tab === "runtime" && (
                 <RuntimeView
                   verdict={verdict}
@@ -334,6 +346,13 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {backendDown && (
+        <div className="toast toast-error" role="alert">
+          <span className="toast-title">Backend unreachable</span>
+          <span className="toast-body">start the sidecar — retrying…</span>
+        </div>
+      )}
     </main>
   );
 }

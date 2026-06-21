@@ -10,7 +10,7 @@
   --color-on-accent: #37323e; /* dark text on gold/orange accents */
 
   --font-title: "Poltawski Nowy", serif;
-  --font-body: "League Spartan", system-ui, sans-serif;
+  --font-body: "Host Grotesk", system-ui, sans-serif;
 
   --radius: 8px;
   --space-sm: 8px;
@@ -24,6 +24,26 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-gutter: stable;
+  font-optical-sizing: auto;
+}
+
+/* WebKit/Blink: transparent track, gold thumb, no arrow buttons. */
+*::-webkit-scrollbar {
+  width: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--color-primary);
+  border-radius: var(--radius);
+}
+
+*::-webkit-scrollbar-button {
+  display: none;
 }
 
 html,
@@ -84,19 +104,48 @@ a:hover {
   opacity: 0.8;
 }
 
-/* Sidecar liveness line, centered under the title. */
-.health {
-  font-size: 1rem;
-  font-weight: 500;
-  text-align: center;
+/* Sidecar-down notification: fixed bottom-right, only mounted while the backend
+   is unreachable. Solid background so it stays readable over content; orange
+   border carries the alert (DESIGN.md: borders over shadows). */
+.toast {
+  position: fixed;
+  right: var(--space-lg);
+  bottom: var(--space-lg);
+  z-index: 10;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-md);
+  background: var(--color-background);
+  border: var(--border);
+  border-radius: var(--radius);
+  animation: toast-in 0.3s ease;
 }
 
-.health .up {
-  color: var(--color-primary);
+.toast-error {
+  border-color: var(--color-secondary);
 }
 
-.health .down {
+.toast-title {
+  font-weight: 600;
   color: var(--color-secondary);
+}
+
+.toast-body {
+  font-size: 1rem;
+  opacity: 0.8;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-sm));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* Drop target for the mods/ folder. */
@@ -125,7 +174,7 @@ a:hover {
   color: var(--color-text);
   border: var(--border);
   border-radius: var(--radius);
-  padding: 10px var(--space-md);
+  padding: var(--space-md);
   font-family: var(--font-body);
   font-size: 1rem;
 }
@@ -140,7 +189,7 @@ a:hover {
   color: var(--color-on-accent);
   border: none;
   border-radius: var(--radius);
-  padding: 10px var(--space-md);
+  padding: var(--space-md);
   font-family: var(--font-body);
   font-size: 1rem;
   font-weight: 600;
@@ -202,7 +251,7 @@ a:hover {
 }
 
 .mc-version select {
-  padding: var(--space-sm);
+  padding: 7px var(--space-md);
   background: var(--color-background);
   color: var(--color-primary);
   border: var(--border);
@@ -234,30 +283,187 @@ a:hover {
   padding: var(--space-md);
 }
 
-.mods-table {
+/* Mods tab fills the viewport so only the card list scrolls, not the page.
+   The 12rem offset covers the header + container padding above the view; the
+   controls/count/notes keep their natural height and the list takes the rest. */
+.view-mods {
+  height: calc(100dvh - 12rem);
+  min-height: 320px;
+}
+
+/* Mod filter bar: search box stretches, env chips sit on the right and wrap
+   under it on narrow widths. Stays put while the list below scrolls. */
+.mods-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.mods-controls .path-input {
+  min-width: 220px;
+}
+
+.note.mods-count {
+  font-size: 1rem;
+  opacity: 0.5;
+  margin: 0;
+}
+
+/* Mod cards — one card per mod, full width, stacked. Borders separate them
+   (DESIGN.md: no shadows, no stacked backgrounds). Inside the mods tab this is
+   the only scroll region (flex:1 + min-height:0 lets it shrink and overflow).
+   The list is virtualized: .mods-virt is a spacer sized to the full list, and
+   only the cards near the viewport are rendered, positioned with translateY. */
+.mods-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: var(--space-sm);
+}
+
+.mods-virt {
+  position: relative;
   width: 100%;
-  border-collapse: collapse;
+}
+
+.mods-virt-item {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  will-change: transform;
+}
+
+.mod-card {
+  width: 100%;
+  border: var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+/* Title row: name + slug on the left, environment badge pinned right. */
+.mod-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-md);
+  border-bottom: 2px solid var(--color-surface);
+  padding-bottom: var(--space-sm);
+}
+
+.mod-card-id {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.mod-name {
+  font-size: 1.25rem;
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.mod-slug {
+  font-size: 1rem;
+  opacity: 0.6;
+}
+
+/* Environment badge. Client-only is the signal that matters (untestable
+   headless), so it gets the gold; the rest stay neutral. */
+.mod-env {
+  flex-shrink: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: var(--space-sm);
+  border: 2px solid var(--color-surface);
+  border-radius: var(--radius);
+  text-transform: capitalize;
+}
+
+.mod-env.env-client {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  opacity: 1;
+}
+
+/* Key/value metadata grid. */
+.mod-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-md);
+  margin: 0;
+}
+
+.mod-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.mod-field-wide {
+  grid-column: 1 / -1;
+}
+
+.mod-field dt {
+  font-size: 0.875rem;
+  text-transform: capitalize;
+  letter-spacing: 0.05em;
+  opacity: 0.6;
+}
+
+.mod-field dd {
+  margin: 0;
   font-size: 1rem;
 }
 
-.mods-table th,
-.mods-table td,
-.conflicts-table th,
-.conflicts-table td {
-  text-align: left;
+.mod-jar {
+  word-break: break-all;
+  opacity: 0.85;
+}
+
+/* depends / provides relation rows. */
+.mod-rel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+.mod-rel-label {
+  font-size: 0.875rem;
+  text-transform: capitalize;
+  letter-spacing: 0.05em;
+  opacity: 0.6;
+}
+
+.mod-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mod-tag {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  font-size: 0.875rem;
   padding: var(--space-sm);
-  border-bottom: 1px solid var(--color-surface);
+  border: 2px solid var(--color-surface);
+  border-radius: var(--radius);
 }
 
-.mods-table th,
-.conflicts-table th {
-  font-weight: 600;
-  opacity: 0.8;
-}
-
-.mods-table tr:last-child td,
-.conflicts-table tr:last-child td {
-  border-bottom: none;
+.mod-tag-v {
+  opacity: 0.6;
 }
 
 .panel-title {
@@ -291,7 +497,7 @@ a:hover {
   font-family: var(--font-body);
   font-size: 1rem;
   text-align: left;
-  padding: var(--space-sm) var(--space-md);
+  padding: var(--space-md);
   cursor: pointer;
   transition: var(--transition);
 }
@@ -340,6 +546,8 @@ a:hover {
   gap: var(--space-md);
 }
 
+/* Stat cards double as nav buttons (jump to the relevant section); the gold
+   border on hover is the interaction signal. */
 .stat {
   border: var(--border);
   border-radius: var(--radius);
@@ -347,6 +555,16 @@ a:hover {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.stat:hover {
+  border-color: var(--color-primary);
 }
 
 .stat-n {
@@ -363,6 +581,7 @@ a:hover {
 /* Severity filter chips. Active chip = gold border + its severity color. */
 .filters {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-sm);
 }
 
@@ -373,7 +592,7 @@ a:hover {
   color: var(--color-text);
   font-family: var(--font-body);
   font-size: 1rem;
-  padding: var(--space-sm) var(--space-md);
+  padding: var(--space-md);
   cursor: pointer;
   transition: var(--transition);
 }
@@ -386,26 +605,172 @@ a:hover {
   border-color: var(--color-primary);
 }
 
+/* --- Conflict map: grouped by consequence (§9) --------------------------
+   No table. Each bucket is a <details> separated by a border; rows are
+   compact two-line cards, the heavy `detail` payload hidden behind a nested
+   <details>. One background everywhere, gold only on the runtime/missing
+   signals — per DESIGN.md. */
+.conflict-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  max-height: calc(100vh - 16em);
+  overflow: auto;
+}
+
+.conflict-group {
+  border: var(--border);
+  border-radius: var(--radius);
+}
+
+.group-head,
+.conflict-summary {
+  list-style: none;
+  cursor: pointer;
+}
+.group-head::-webkit-details-marker,
+.conflict-summary::-webkit-details-marker {
+  display: none;
+}
+
+.group-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.group-name {
+  font-weight: 600;
+}
+.group-count {
+  opacity: 0.7;
+}
+.group-hint {
+  margin-left: auto;
+  opacity: 0.5;
+}
+
+/* Disclosure marker: gold (the interactive toggle), rotates open via the native
+   [open] state (no JS). */
+.chevron {
+  flex: none;
+  align-self: center;
+  color: var(--color-primary);
+  transition: var(--transition);
+}
+.row-chevron {
+  margin-left: auto;
+}
+.conflict-group[open] > .group-head .chevron,
+.conflict-row[open] .row-chevron {
+  transform: rotate(180deg);
+}
+
+.conflict-list {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 23em);
+  overflow: auto;
+}
+
+.conflict-row {
+  padding: var(--space-sm) var(--space-md);
+  border-top: 1px solid var(--color-surface);
+}
+
+.conflict-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+/* Type label is muted context; the subject carries the weight. */
+.conflict-type {
+  opacity: 0.55;
+}
+.conflict-subject {
+  font-family: var(--font-body);
+  font-weight: 600;
+}
+
+.dep-arrow {
+  opacity: 0.55;
+  font-weight: 400;
+  padding: 0 var(--space-sm);
+}
+/* The absent id is the actionable thing — highlight it (DESIGN: conflict gold). */
+.dep-missing {
+  color: var(--color-primary);
+}
+
 /* Static mixin candidate confirmed by the runtime export (§7 link). */
-.confirmed {
+.tag-confirmed {
   color: var(--color-primary);
   font-weight: 600;
-  font-size: 1rem;
 }
 
-.conflicts-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 1rem;
-}
-
-.conflicts-table .subject {
+.conflict-context {
+  margin-top: var(--space-sm);
   font-family: var(--font-body);
+  opacity: 0.75;
+}
+.ctx-label {
+  opacity: 0.7;
+  margin-right: var(--space-sm);
+}
+.ctx-meta {
+  opacity: 0.8;
+}
+
+.conflict-detail {
+  margin-top: var(--space-sm);
+  font-family: var(--font-body);
+}
+
+.bymod {
+  margin: 0;
+}
+.bymod-row {
+  display: flex;
+  gap: var(--space-md);
+}
+.bymod-row dt {
+  flex: none;
+  min-width: 10rem;
+  opacity: 0.75;
+}
+.bymod-row dd {
+  margin: 0;
   opacity: 0.9;
 }
 
-.conflicts-table .members {
-  opacity: 0.7;
+.resolution-note {
+  margin: var(--space-sm) 0 0;
+  color: var(--color-primary);
+}
+
+/* --- Recipes tab: collisions aggregated by colliding mod set ------------- */
+.recipes-intro {
+  margin: 0 0 var(--space-md);
+  opacity: 0.8;
+}
+
+/* The mod pair is the headline; reuse .conflict-group/.group-head chrome. */
+.recipe-pair {
+  font-family: var(--font-body);
+}
+
+.recipe-list {
+  margin: 0;
+  padding: 0 var(--space-md) var(--space-sm);
+  list-style: none;
+}
+.recipe-id {
+  font-family: var(--font-body);
+  padding: var(--space-sm) 0;
+  border-top: 1px solid var(--color-surface);
+  opacity: 0.9;
 }
 
 .runner {
@@ -455,10 +820,6 @@ a:hover {
 
 .sev-info {
   opacity: 0.6;
-}
-
-.env-client {
-  color: var(--color-primary);
 }
 
 .note {

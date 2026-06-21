@@ -11,6 +11,107 @@ export const CONFLICT_LABEL: Record<Conflict["type"], string> = {
 
 export const SEVERITY_ORDER: Severity[] = ["error", "warning", "info"];
 
+// The axis users actually triage on (§9): what does this conflict *do*?
+//   blocking        — the loader refuses to start (duplicate id, missing dep)
+//   silent_override — one definition silently wins (recipe / same-method mixin)
+//   benign          — expected coexistence, usually no effect (class mixin, tag)
+// Severity already encodes this exact split (error/warning/info), so the map is
+// a pure relabel; keeping it here keeps the consequence vocabulary in one place.
+export type Consequence = "blocking" | "silent_override" | "benign";
+
+export const CONSEQUENCE_ORDER: Consequence[] = ["blocking", "silent_override", "benign"];
+
+export const CONSEQUENCE_LABEL: Record<Consequence, string> = {
+  blocking: "Blocking",
+  silent_override: "Silent override",
+  benign: "Probably OK",
+};
+
+export const CONSEQUENCE_HINT: Record<Consequence, string> = {
+  blocking: "the loader refuses to start",
+  silent_override: "one definition overwrites another, without warning",
+  benign: "expected coexistence, usually harmless",
+};
+
+export function conflictConsequence(c: Conflict): Consequence {
+  if (c.severity === "error") return "blocking";
+  if (c.severity === "warning") return "silent_override";
+  return "benign";
+}
+
+// Type-specific `detail` payloads promoted into the row body (detectors.py).
+// Each is defensive: the payload is `Record<string, unknown>` over the wire.
+export function conflictJars(c: Conflict): string[] {
+  return Array.isArray(c.detail.jars) ? c.detail.jars.map(String) : [];
+}
+
+export function conflictItems(c: Conflict): string[] {
+  return Array.isArray(c.detail.items) ? c.detail.items.map(String) : [];
+}
+
+export function conflictSharedMethods(c: Conflict): string[] {
+  return Array.isArray(c.detail.sharedMethods) ? c.detail.sharedMethods.map(String) : [];
+}
+
+// tag_overlap only: { mod id -> item ids it contributes to the shared tag }.
+export function conflictByMod(c: Conflict): Record<string, string[]> {
+  const raw = c.detail.byMod;
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, string[]> = {};
+  for (const [mod, items] of Object.entries(raw as Record<string, unknown>)) {
+    out[mod] = Array.isArray(items) ? items.map(String) : [];
+  }
+  return out;
+}
+
+// dependency only: the needy mod and the id it can't find.
+export function dependencyRelation(c: Conflict): { mod: string; missing: string } {
+  return {
+    mod: String(c.detail.mod ?? c.members[0] ?? ""),
+    missing: String(c.detail.missing ?? ""),
+  };
+}
+
+// A human one-liner from `resolution` when the Phase 4 generator filled it.
+export function resolutionNote(c: Conflict): string | null {
+  if (!c.resolution) return null;
+  for (const key of ["note", "reason", "summary"]) {
+    const v = c.resolution[key];
+    if (typeof v === "string" && v) return v;
+  }
+  return null;
+}
+
+export const isRecipeCollision = (c: Conflict): boolean => c.type === "recipe_collision";
+
+export interface RecipeCollisionGroup {
+  key: string; // stable React key + display label
+  members: string[]; // the mods fighting over these recipe ids
+  recipes: string[]; // sorted recipe ids they both write
+}
+
+// Recipe collisions cluster by the *set of mods* that fight over recipe ids:
+// the actionable unit is "these two mods override each other across N recipes",
+// far less saturating than one row per recipe. Groups sorted by count desc.
+export function groupRecipeCollisions(conflicts: Conflict[]): RecipeCollisionGroup[] {
+  const byMembers = new Map<string, RecipeCollisionGroup>();
+  for (const c of conflicts) {
+    if (!isRecipeCollision(c)) continue;
+    const key = c.members.join(" ↔ ");
+    let group = byMembers.get(key);
+    if (!group) {
+      group = { key, members: c.members, recipes: [] };
+      byMembers.set(key, group);
+    }
+    const recipe = String(c.detail.recipe ?? "");
+    if (recipe) group.recipes.push(recipe);
+  }
+  const groups = [...byMembers.values()];
+  for (const g of groups) g.recipes.sort();
+  groups.sort((a, b) => b.recipes.length - a.recipes.length || a.key.localeCompare(b.key));
+  return groups;
+}
+
 // One-line subject for a conflict row, by type.
 export function conflictSubject(c: Conflict): string {
   const d = c.detail;
