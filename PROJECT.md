@@ -28,7 +28,9 @@ bisection** of conflicts.
 
 ## 2. Goal
 
-A **desktop application** that takes a Fabric `mods/` folder and:
+A **desktop application** that takes a modpack — a launcher instance (CurseForge,
+Modrinth, Prism/MultiMC) or a bare `mods/` folder, any loader (Fabric, Quilt, Forge,
+NeoForge) — and:
 
 1. produces a **conflict map** through static analysis (fast, offline);
 2. **confirms with certainty** load-time conflicts by booting a real headless Fabric server in
@@ -74,7 +76,18 @@ through the **version profile** (§6) — never hardcoded.
 
 **In scope:**
 
-- **Fabric loader only** (no Forge/NeoForge in the MVP — different metadata formats).
+- **All four loaders**: Fabric, Quilt, Forge, NeoForge. Each ships different metadata
+  (`fabric.mod.json`, `quilt.mod.json`, `(neoforge.)mods.toml`) parsed by a per-loader adapter
+  into one common `Mod`; the MC-version constraint is normalised so detection stays
+  loader-agnostic (`app/analyzer/metadata/`).
+- **Launcher-native ingestion**: point at a CurseForge / Modrinth / Prism / MultiMC instance (or a
+  bare `mods/` folder) and the content sub-folders are located automatically (`app/sources/`).
+- **Beyond mods**: inventory of resource packs / datapacks / shaders, override detection
+  (assets/data shipped by ≥2 packs), and a global index of the items/blocks the pack adds
+  (`app/analyzer/packs.py`, `registry_index.py`).
+- **Online enrichment** (best-effort, offline-first): Modrinth (hash lookup + update check) and
+  CurseForge (offline manifest + optional API key) attach project links and update status
+  (`app/enrich/`).
 - Headless **server** boot (no headless client in the MVP).
 - Detection: content duplication (tags), recipe collisions, load-time mixin conflicts,
   dependencies/versions, duplicate jars.
@@ -82,13 +95,16 @@ through the **version profile** (§6) — never hardcoded.
 
 **Out of scope (assumed, to be documented in the UI):**
 
-- **Client-only** mods (`environment: client`): not loaded by a Fabric server → visual conflicts
+- **Client-only** mods (`environment: client`): not loaded by a server boot → visual conflicts
   (render, shaders, HUD) not testable in the MVP. Read the `environment` field and display
   "N mods not testable in server mode".
 - **Silent** conflicts: two mixins that coexist without crashing but break behavior.
   Not detectable without gameplay assertions (a gametest model like PackTest). Out of MVP.
-- Forge / NeoForge, headless client (Xvfb / offscreen GL), other version blocks: future
-  iterations (added as profiles + adapters, not as a rewrite).
+- The **item index is approximate**: built from `lang`/`model` assets, so items registered purely
+  in code (no lang key, no item model) aren't listed.
+- A **headless client** (Xvfb / offscreen GL) is out of scope; the runner does server boots only.
+  Server boots cover all four loaders (the itzg image `TYPE` is set from the detected loader), but
+  client-only visual conflicts remain untestable.
 
 ## 6. Version profile (contract — Phases 1 and 2)
 
@@ -133,7 +149,7 @@ Block landmarks (the breaks that change the profile):
 | Content duplication  | `tagPath` → tag overlaps                                       | — (resolved by config)                                |
 | Recipe collisions    | `recipePath` → same entries/grid                               | Deserialization failure on load                       |
 | Mixin conflicts      | `*.mixins.json` → common class/method targets (heuristic)     | **Post-transformation mixin export** = ground truth   |
-| Dependencies / vers. | `fabric.mod.json` (depends, target version)                   | Resolution error at boot                              |
+| Dependencies / vers. | loader metadata (depends, target version)                     | Resolution error at boot                              |
 | Duplicate jars       | duplicated hash / modid                                        | Loader refuses to start                               |
 
 **Mixins — from estimation to observation** via JVM flags at boot:
@@ -145,15 +161,15 @@ We build the overlap map from what the loader _actually did_, not from declared 
 
 ## 8. The runtime runner (heart of the project)
 
-Proven pattern: a Fabric server runs headless via
-`java -Xmx<N>G -jar fabric-server-launch.jar nogui`. Ready-made Fabric server Docker images exist
-(OpenJDK + configurable MC/loader version, auto EULA, RCON). The Java version comes from the
-profile (`jdk`).
+Proven pattern: a modded server runs headless via `java -Xmx<N>G -jar <server>.jar nogui`. The
+ready-made `itzg/minecraft-server` image boots any loader behind one mechanism — the loader is
+detected from the jars and passed as the image `TYPE` (FABRIC/QUILT/FORGE/NEOFORGE), with the
+exact MC version + JDK from the profile (`jdk`); the loader build is auto-resolved per version.
 
 **Boot loop (Python orchestrator):**
 
-1. Prepare a container: Fabric server image (profile's jdk) + Fabric API (exact version) +
-   injected subset of mods.
+1. Prepare a container: itzg image at the profile's jdk, image `TYPE` = the detected loader,
+   exact MC version, + injected subset of mods.
 2. Launch the boot, mixin debug flags enabled, timeout.
 3. The server loads: mixins → registry freeze → datapacks/recipes. We don't need to go further
    (no gameplay); cut off after the registry freeze / world load.
