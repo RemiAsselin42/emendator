@@ -3,19 +3,42 @@ import {
   AmbiguousVersionError,
   type BisectResult,
   bisectSet,
+  detectInstance,
   fetchHealth,
+  type Instance,
+  type InstanceReport,
   listProfiles,
   type RunVerdict,
   type ScanResult,
-  scanMods,
+  scanInstance,
   testSet,
   type VersionCandidate,
   type VersionDetection,
 } from "./lib/api";
 import { isRecipeCollision } from "./lib/conflicts";
-import { ConflictsView, Overview, RecipesView, ResolutionView, RuntimeView } from "./views";
+import {
+  ConflictsView,
+  DatapacksView,
+  ItemsView,
+  Overview,
+  RecipesView,
+  ResolutionView,
+  ResourcePacksView,
+  RuntimeView,
+  ShadersView,
+} from "./views";
 
-type Tab = "scan" | "overview" | "conflicts" | "recipes" | "runtime" | "resolution";
+type Tab =
+  | "scan"
+  | "overview"
+  | "conflicts"
+  | "recipes"
+  | "runtime"
+  | "resolution"
+  | "resourcepacks"
+  | "datapacks"
+  | "shaders"
+  | "items";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "scan", label: "Scan" },
@@ -26,12 +49,46 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "resolution", label: "Resolution" },
 ];
 
+// How each detected source reads in the badge; raw_mods is the bare folder input.
+const SOURCE_LABEL: Record<Instance["source"], string> = {
+  curseforge: "CurseForge",
+  modrinth: "Modrinth",
+  prism: "Prism",
+  multimc: "MultiMC",
+  vanilla: ".minecraft",
+  raw_mods: "mods folder",
+};
+
+// Header chip summarising the resolved instance: source, name, loader, version
+// and the content counts that hint at what's beyond the mods themselves.
+function InstanceBadge({ instance }: { instance: Instance }) {
+  const counts: string[] = [`${instance.modCount} mods`];
+  if (instance.resourcepackCount > 0) counts.push(`${instance.resourcepackCount} resourcepacks`);
+  if (instance.datapackCount > 0) counts.push(`${instance.datapackCount} datapacks`);
+  if (instance.shaderpackCount > 0) counts.push(`${instance.shaderpackCount} shaders`);
+  return (
+    <div className={`instance-badge source-${instance.source}`}>
+      <span className="instance-source">{SOURCE_LABEL[instance.source]}</span>
+      {instance.name && <span className="instance-name">{instance.name}</span>}
+      {instance.loader !== "unknown" && <span className="instance-loader">{instance.loader}</span>}
+      {instance.mcVersion && <span className="instance-mc">{instance.mcVersion}</span>}
+      <span className="instance-counts">{counts.join(" · ")}</span>
+    </div>
+  );
+}
+
 export default function App() {
   // Only true once a health check has actually failed — stays false during the
   // first in-flight check so the "unreachable" toast never flashes on boot.
   const [backendDown, setBackendDown] = useState(false);
   const [path, setPath] = useState("");
   const [result, setResult] = useState<ScanResult | null>(null);
+  // The full instance report (mods + content packs); `result` mirrors its `mods`
+  // slice so the conflict-map views are unchanged.
+  const [report, setReport] = useState<InstanceReport | null>(null);
+  // The launcher instance the dropped path resolved to (CurseForge/Modrinth/…),
+  // shown as a badge; null until detected, best-effort (never blocks a scan).
+  const [instance, setInstance] = useState<Instance | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -81,13 +138,21 @@ export default function App() {
     setPendingDetection(null);
     setVerdict(null);
     setBisectResult(null);
+    // Best-effort, in parallel: never blocks or fails the scan, just feeds the
+    // header badge (pack name, source, loader, content counts).
+    void detectInstance(trimmed)
+      .then(setInstance)
+      .catch(() => setInstance(null));
     try {
-      const scan = await scanMods(trimmed, pick);
-      setResult(scan);
-      setVersion(scan.profile);
+      const scanReport = await scanInstance(trimmed, pick);
+      setReport(scanReport);
+      setResult(scanReport.mods);
+      setInstance(scanReport.instance);
+      setVersion(scanReport.mods.profile);
       setTab("overview");
     } catch (e) {
       setResult(null);
+      setReport(null);
       setTab("scan");
       if (e instanceof AmbiguousVersionError) {
         setPendingDetection(e.detection);
@@ -207,11 +272,31 @@ export default function App() {
   const recipeCount = result ? result.conflicts.filter(isRecipeCollision).length : 0;
   const conflictCount = result ? result.counts.conflicts - recipeCount : 0;
 
+  // Content tabs appear only when the instance actually has that content, so a
+  // bare mods folder keeps the original layout.
+  const contentTabs: { id: Tab; label: string; count: number }[] = [];
+  if (report) {
+    if (report.resourcepacks.length > 0)
+      contentTabs.push({
+        id: "resourcepacks",
+        label: "Resource Packs",
+        count: report.resourcepacks.length,
+      });
+    if (report.datapacks.length > 0)
+      contentTabs.push({ id: "datapacks", label: "Datapacks", count: report.datapacks.length });
+    if (report.shaderpacks.length > 0)
+      contentTabs.push({ id: "shaders", label: "Shaders", count: report.shaderpacks.length });
+    if (report.items.total > 0)
+      contentTabs.push({ id: "items", label: "Items", count: report.items.total });
+  }
+
   return (
     <main className="container">
       <header className="header">
         <h1>Emendator</h1>
-        <p className="tagline">Fabric modpack conflict analyzer</p>
+        <p className="tagline">Minecraft modpack conflict analyzer</p>
+
+        {instance && result && <InstanceBadge instance={instance} />}
 
         {result && (
           <div className="version-bar">
@@ -256,16 +341,27 @@ export default function App() {
               {result && t.id === "recipes" && ` (${recipeCount})`}
             </button>
           ))}
+          {contentTabs.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className={tab === t.id ? "nav-item nav-item-active" : "nav-item"}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label} ({t.count})
+            </button>
+          ))}
         </nav>
 
         <div className="content">
           {tab === "scan" && (
             <section
               className={dragging ? "dropzone dragging" : "dropzone"}
-              aria-label="mods folder drop target"
+              aria-label="modpack folder drop target"
             >
               <p>
-                Drop your modpack's <code>mods/</code> folder here, or paste its path.
+                Drop a modpack instance (CurseForge, Modrinth, Prism…) or a bare <code>mods/</code>{" "}
+                folder here, or paste its path.
               </p>
               <form
                 className="dropzone-form"
@@ -342,6 +438,17 @@ export default function App() {
               {tab === "resolution" && (
                 <ResolutionView modsPath={result.modsPath} version={version ?? undefined} />
               )}
+              {tab === "resourcepacks" && report && (
+                <ResourcePacksView
+                  packs={report.resourcepacks}
+                  conflicts={report.resourcepackConflicts}
+                />
+              )}
+              {tab === "datapacks" && report && (
+                <DatapacksView packs={report.datapacks} conflicts={report.datapackConflicts} />
+              )}
+              {tab === "shaders" && report && <ShadersView packs={report.shaderpacks} />}
+              {tab === "items" && report && <ItemsView index={report.items} />}
             </div>
           )}
         </div>

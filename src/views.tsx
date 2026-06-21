@@ -11,12 +11,16 @@ import {
 import type {
   BisectResult,
   Conflict,
+  Datapack,
   ExportResult,
   ModEnvironment,
+  RegistryIndex,
   ResolutionPlan,
+  ResourcePack,
   RunVerdict,
   ScanResult,
   Severity,
+  ShaderPack,
 } from "./lib/api";
 import { resolveExport, resolvePreview } from "./lib/api";
 import {
@@ -360,12 +364,33 @@ function ModCard({ mod }: { mod: ScanResult["mods"][number] }) {
     <article className="mod-card">
       <header className="mod-card-head">
         <div className="mod-card-id">
-          <h3 className="mod-name">{mod.name ?? mod.id}</h3>
+          <h3 className="mod-name">
+            {mod.homepage ? (
+              <a href={mod.homepage} target="_blank" rel="noreferrer">
+                {mod.name ?? mod.id}
+              </a>
+            ) : (
+              (mod.name ?? mod.id)
+            )}
+          </h3>
           {mod.name && <span className="mod-slug">{mod.id}</span>}
+          {mod.updateAvailable && (
+            <span className="mod-update">
+              update{mod.latestVersion ? ` → ${mod.latestVersion}` : ""}
+            </span>
+          )}
         </div>
-        <span className={`mod-env env-${mod.environment === "*" ? "any" : mod.environment}`}>
-          {mod.environment === "*" ? "client+server" : mod.environment}
-        </span>
+        <div className="mod-card-tags">
+          {mod.provider && (
+            <span className={`mod-provider provider-${mod.provider}`}>{mod.provider}</span>
+          )}
+          {mod.loader !== "unknown" && (
+            <span className={`mod-loader loader-${mod.loader}`}>{mod.loader}</span>
+          )}
+          <span className={`mod-env env-${mod.environment === "*" ? "any" : mod.environment}`}>
+            {mod.environment === "*" ? "client+server" : mod.environment}
+          </span>
+        </div>
       </header>
 
       <dl className="mod-meta">
@@ -584,6 +609,7 @@ function ModsSection({
         mod.name ?? "",
         mod.version ?? "",
         mod.jar,
+        mod.loader,
         ...mod.provides,
         ...Object.keys(mod.depends),
       ]
@@ -741,6 +767,198 @@ export function RuntimeView({
           {bisectResult.note && <p className="note">{bisectResult.note}</p>}
         </div>
       )}
+    </div>
+  );
+}
+
+// Override groups (resource-pack assets / datapack data shared by ≥2 packs).
+// Same shape as recipe collisions: a colliding set, its paths behind expand.
+function OverrideList({ conflicts, unit }: { conflicts: Conflict[]; unit: string }) {
+  if (conflicts.length === 0) return null;
+  return (
+    <div className="conflict-groups">
+      {conflicts.map((c) => {
+        const paths = (c.detail.paths as string[] | undefined) ?? [];
+        const count = (c.detail.count as number | undefined) ?? paths.length;
+        return (
+          <details className="conflict-group" key={c.members.join("|")}>
+            <summary className="group-head">
+              <Chevron />
+              <span className="group-name recipe-pair">{c.members.join("  ↔  ")}</span>
+              <span className="group-count">
+                · {count} {unit}
+              </span>
+            </summary>
+            <ul className="recipe-list">
+              {paths.map((p) => (
+                <li className="recipe-id" key={p}>
+                  {p}
+                </li>
+              ))}
+              {count > paths.length && <li className="note">…and {count - paths.length} more</li>}
+            </ul>
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
+export function ResourcePacksView({
+  packs,
+  conflicts,
+}: {
+  packs: ResourcePack[];
+  conflicts: Conflict[];
+}) {
+  return (
+    <div className="view">
+      {conflicts.length > 0 && (
+        <p className="note">
+          {conflicts.length} asset override{conflicts.length > 1 ? "s" : ""} — when packs share a
+          file, load order decides which one wins.
+        </p>
+      )}
+      <OverrideList conflicts={conflicts} unit="assets" />
+      <div className="pack-list">
+        {packs.map((p) => (
+          <article className="pack-card" key={p.name}>
+            <header className="pack-card-head">
+              <h3 className="pack-name">{p.name}</h3>
+              <span className="pack-source">{p.source}</span>
+            </header>
+            <p className="note">
+              {p.assetCount} assets
+              {p.packFormat != null && ` · format ${p.packFormat}`}
+            </p>
+            {p.description && <p className="pack-desc">{p.description}</p>}
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function DatapacksView({ packs, conflicts }: { packs: Datapack[]; conflicts: Conflict[] }) {
+  return (
+    <div className="view">
+      {conflicts.length > 0 && (
+        <p className="note">
+          {conflicts.length} datapack override{conflicts.length > 1 ? "s" : ""} — two datapacks ship
+          the same recipe/loot/tag; load order decides.
+        </p>
+      )}
+      <OverrideList conflicts={conflicts} unit="files" />
+      <div className="pack-list">
+        {packs.map((p) => (
+          <article className="pack-card" key={`${p.location}/${p.name}`}>
+            <header className="pack-card-head">
+              <h3 className="pack-name">{p.name}</h3>
+              <span className="pack-source">{p.location}</span>
+            </header>
+            <p className="note">
+              {p.dataCount} files
+              {p.packFormat != null && ` · format ${p.packFormat}`}
+            </p>
+            {p.description && <p className="pack-desc">{p.description}</p>}
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Cap on rendered rows: a big pack has thousands of items; search narrows, and
+// we render only the first slice to keep the DOM light (count shows the rest).
+const ITEM_CAP = 500;
+
+export function ItemsView({ index }: { index: RegistryIndex }) {
+  const [query, setQuery] = useState("");
+  const [kinds, setKinds] = useState<Set<"item" | "block">>(new Set());
+
+  const toggleKind = (k: "item" | "block") =>
+    setKinds((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return index.items.filter((it) => {
+      if (kinds.size > 0 && !kinds.has(it.kind)) return false;
+      if (!q) return true;
+      return `${it.id} ${it.displayName ?? ""} ${it.mod}`.toLowerCase().includes(q);
+    });
+  }, [index.items, query, kinds]);
+  const shown = filtered.slice(0, ITEM_CAP);
+
+  return (
+    <div className="view">
+      <p className="note">
+        {index.total} items & blocks ({index.itemCount} items · {index.blockCount} blocks).
+        Approximate — built from lang/model assets, so code-only registrations aren't listed.
+      </p>
+      <div className="mods-controls">
+        <input
+          className="path-input"
+          type="search"
+          placeholder="Search items by name, id, mod…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          spellCheck={false}
+        />
+        <div className="filters">
+          {(["item", "block"] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              className={kinds.has(k) ? "chip chip-on" : "chip"}
+              onClick={() => toggleKind(k)}
+            >
+              {k} ({k === "item" ? index.itemCount : index.blockCount})
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="note mods-count">
+        {filtered.length} of {index.total}
+        {filtered.length > ITEM_CAP ? ` · showing first ${ITEM_CAP}` : ""}
+      </p>
+      {shown.length === 0 ? (
+        <p className="note">No items match the current filters.</p>
+      ) : (
+        <ul className="item-list">
+          {shown.map((it) => (
+            <li className="item-row" key={it.id}>
+              <span className={`item-kind kind-${it.kind}`}>{it.kind}</span>
+              <span className="item-name">{it.displayName ?? it.id}</span>
+              <span className="item-id">{it.id}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export function ShadersView({ packs }: { packs: ShaderPack[] }) {
+  return (
+    <div className="view">
+      <p className="note">
+        Shader packs are opaque to static analysis — listed for inventory only.
+      </p>
+      <div className="pack-list">
+        {packs.map((p) => (
+          <article className="pack-card" key={p.name}>
+            <header className="pack-card-head">
+              <h3 className="pack-name">{p.name}</h3>
+              <span className="pack-source">{p.source}</span>
+            </header>
+          </article>
+        ))}
+      </div>
     </div>
   );
 }
