@@ -17,15 +17,23 @@ export async function fetchHealth(): Promise<HealthResponse> {
 
 export type ModEnvironment = "server" | "client" | "*";
 
+export type Loader = "fabric" | "quilt" | "forge" | "neoforge" | "unknown";
+
 export interface Mod {
   id: string;
   name: string | null;
   version: string | null;
   mcVersion: string | null;
   environment: ModEnvironment;
+  loader: Loader;
   depends: Record<string, string | string[]>;
   provides: string[];
   jar: string;
+  // Online enrichment (null when not looked up / not found).
+  provider: "modrinth" | "curseforge" | null;
+  homepage: string | null;
+  latestVersion: string | null;
+  updateAvailable: boolean | null;
 }
 
 export type ConflictType =
@@ -209,7 +217,101 @@ export async function listProfiles(): Promise<VersionCandidate[]> {
 /** Scan a folder. With no `version` the backend auto-detects; an ambiguous set
  *  rejects with 409, surfaced here as {@link AmbiguousVersionError}. */
 export async function scanMods(path: string, version?: string): Promise<ScanResult> {
-  const res = await fetch(`${BASE}/mods/scan`, {
+  return scanAt<ScanResult>("/mods/scan", path, version);
+}
+
+// --- Instances (launcher-native ingestion) -------------------------------
+
+export type InstanceSource =
+  | "curseforge"
+  | "modrinth"
+  | "prism"
+  | "multimc"
+  | "vanilla"
+  | "raw_mods";
+
+export interface InstanceFolders {
+  mods: string | null;
+  resourcepacks: string | null;
+  shaderpacks: string | null;
+  config: string | null;
+  datapacks: string[];
+}
+
+export interface Instance {
+  root: string;
+  source: InstanceSource;
+  name: string | null;
+  loader: Loader;
+  mcVersion: string | null;
+  folders: InstanceFolders;
+  modCount: number;
+  resourcepackCount: number;
+  datapackCount: number;
+  shaderpackCount: number;
+}
+
+export interface ResourcePack {
+  name: string;
+  packFormat: number | null;
+  description: string | null;
+  assetCount: number;
+  source: "zip" | "dir";
+}
+
+export interface Datapack {
+  name: string;
+  location: string;
+  packFormat: number | null;
+  description: string | null;
+  dataCount: number;
+  source: "zip" | "dir";
+}
+
+export interface ShaderPack {
+  name: string;
+  source: "zip" | "dir";
+}
+
+export interface ItemEntry {
+  id: string;
+  displayName: string | null;
+  kind: "item" | "block";
+  mod: string;
+}
+
+export interface RegistryIndex {
+  items: ItemEntry[];
+  total: number;
+  itemCount: number;
+  blockCount: number;
+}
+
+export interface InstanceReport {
+  instance: Instance;
+  mods: ScanResult;
+  resourcepacks: ResourcePack[];
+  datapacks: Datapack[];
+  shaderpacks: ShaderPack[];
+  resourcepackConflicts: Conflict[];
+  datapackConflicts: Conflict[];
+  items: RegistryIndex;
+}
+
+export function detectInstance(path: string): Promise<Instance> {
+  return postJson<Instance>("/instance/detect", { path });
+}
+
+/** Scan an instance (launcher root or bare `mods/` folder) into a full report:
+ *  the mod conflict map plus content-pack sections. Same 409 contract as
+ *  {@link scanMods}; mods and content folders are located automatically. */
+export function scanInstance(path: string, version?: string): Promise<InstanceReport> {
+  return scanAt<InstanceReport>("/instance/scan", path, version);
+}
+
+/** Shared body of scanMods / scanInstance: POST + 409 → AmbiguousVersionError. */
+async function scanAt<T>(endpoint: string, path: string, version?: string): Promise<T> {
+  const res = await fetch(`${BASE}${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path, version }),
@@ -219,5 +321,5 @@ export async function scanMods(path: string, version?: string): Promise<ScanResu
     throw new AmbiguousVersionError(body.detail);
   }
   if (!res.ok) throw await httpError(res);
-  return res.json() as Promise<ScanResult>;
+  return res.json() as Promise<T>;
 }
