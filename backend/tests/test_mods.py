@@ -80,7 +80,7 @@ def test_non_fabric_and_corrupt_jars_become_errors(tmp_path: Path) -> None:
     assert result.counts.mods == 0
     assert result.counts.errors == 3
     reasons = {e.jar: e.reason for e in result.errors}
-    assert "no fabric.mod.json" in reasons["plain.jar"]
+    assert "no recognized mod metadata" in reasons["plain.jar"]
     assert "invalid fabric.mod.json" in reasons["bad.jar"]
     assert "missing 'id'" in reasons["noid.jar"]
 

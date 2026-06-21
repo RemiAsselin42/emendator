@@ -1,11 +1,12 @@
-"""Boot a mod set in a headless Fabric server container and return a verdict.
+"""Boot a mod set in a headless server container (any loader) and return a verdict.
 
-Uses the proven ``itzg/minecraft-server`` image (TYPE=FABRIC), the JDK tag from
-the version profile, and the mixin debug flags from §7 so the loader exports the
-classes it actually transforms (ground truth for mixin conflicts). The set is
-copied into a throwaway ``/data`` volume; we watch the live ``latest.log`` until
-the server reaches a clean start ("Done") or the container exits / times out,
-then classify the outcome.
+Uses the proven ``itzg/minecraft-server`` image, the JDK tag from the version
+profile, the loader as the image ``TYPE`` (Fabric/Quilt/Forge/NeoForge), and the
+mixin debug flags from §7 so the loader exports the classes it actually
+transforms (ground truth for mixin conflicts — SpongePowered Mixin underpins all
+four loaders). The set is copied into a throwaway ``/data`` volume; we watch the
+live ``latest.log`` until the server reaches a clean start ("Done") or the
+container exits / times out, then classify the outcome.
 
 No bisection here (Phase 3) — this boots the whole set as given. Docker calls go
 through the CLI to avoid an SDK dependency; the daemon being down yields a clean
@@ -16,15 +17,38 @@ import shutil
 import subprocess
 import tempfile
 import time
+from collections import Counter
 from pathlib import Path
 from uuid import uuid4
 
-from app.models import RunCause, RunRequest, RunStatus, RunVerdict
+from app.analyzer.mods import read_jars_metadata
+from app.models import Loader, RunCause, RunRequest, RunStatus, RunVerdict
 from app.profile import VersionProfile
 from app.runner.classify import extract_cause, reached_done, tail
 
 _IMAGE = "itzg/minecraft-server"
 _MIXIN_FLAGS = "-Dmixin.debug.export=true -Dmixin.debug.verbose=true -Dmixin.checks=true"
+
+# Our loader -> the itzg image TYPE that boots it. "unknown" falls back to Fabric.
+_LOADER_TYPE: dict[Loader, str] = {
+    "fabric": "FABRIC",
+    "quilt": "QUILT",
+    "forge": "FORGE",
+    "neoforge": "NEOFORGE",
+    "unknown": "FABRIC",
+}
+
+
+def detect_loader(folder: Path) -> Loader:
+    """The dominant loader across a folder's jars (defaults to ``fabric``)."""
+    mods, _errors = read_jars_metadata(sorted(folder.glob("*.jar")))
+    counts: Counter[Loader] = Counter(mod.loader for mod in mods if mod.loader != "unknown")
+    if not counts:
+        return "fabric"
+    loader, _n = counts.most_common(1)[0]
+    return loader
+
+
 _POLL_SECONDS = 3.0
 _DOCKER_CALL_TIMEOUT = 30
 # Running mods = arbitrary code (§8). Drop every Linux capability and re-add only
@@ -49,11 +73,14 @@ def build_run_args(
     memory: str,
     profile: VersionProfile,
     network: str = "bridge",
+    loader: Loader = "fabric",
 ) -> list[str]:
     """Assemble the ``docker run`` argv (pure, so it is unit-tested directly).
 
     ``network`` defaults to ``bridge`` because the itzg image downloads the
-    Fabric server on first boot; pass ``none`` only with the offline image.
+    server + loader on first boot; pass ``none`` only with the offline image.
+    ``loader`` selects the image ``TYPE`` (itzg auto-resolves the loader build
+    for the target version).
     """
     cap_args: list[str] = []
     for capability in _KEEP_CAPS:
@@ -78,7 +105,7 @@ def build_run_args(
         "-e",
         "EULA=TRUE",
         "-e",
-        "TYPE=FABRIC",
+        f"TYPE={_LOADER_TYPE.get(loader, 'FABRIC')}",
         "-e",
         f"VERSION={profile.profile}",
         "-e",
@@ -97,6 +124,7 @@ def boot_jars(
     timeout_seconds: int = 300,
     memory: str = "3G",
     network: str = "bridge",
+    loader: Loader = "fabric",
 ) -> RunVerdict:
     """Boot exactly ``jar_paths`` in a throwaway container and classify the log.
 
@@ -116,7 +144,7 @@ def boot_jars(
             shutil.copy2(jar, mods_dir / jar.name)
 
         launched = subprocess.run(
-            build_run_args(container, workdir, memory, profile, network),
+            build_run_args(container, workdir, memory, profile, network, loader),
             capture_output=True,
             text=True,
             timeout=_DOCKER_CALL_TIMEOUT,
@@ -146,7 +174,14 @@ def run_set(request: RunRequest, profile: VersionProfile) -> RunVerdict:
     folder = Path(request.path)
     if not folder.is_dir():
         return _error(profile, time.monotonic(), f"Not a directory: {request.path}")
-    return boot_jars(sorted(folder.glob("*.jar")), profile, request.timeout_seconds, request.memory)
+    loader = request.loader or detect_loader(folder)
+    return boot_jars(
+        sorted(folder.glob("*.jar")),
+        profile,
+        request.timeout_seconds,
+        request.memory,
+        loader=loader,
+    )
 
 
 def _wait_for_boot(container: str, workdir: Path, timeout: int) -> tuple[str, int]:

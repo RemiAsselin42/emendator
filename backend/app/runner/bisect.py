@@ -16,10 +16,21 @@ from pathlib import Path
 from app.analyzer.mods import scan_mods_folder
 from app.models import BisectResult, BisectStatus, RunCause, RunRequest
 from app.profile import VersionProfile
-from app.runner.runner import boot_jars, is_docker_available
+from app.runner.runner import boot_jars, detect_loader, is_docker_available
 
-# Satisfied by the runtime, never shipped as a candidate jar.
-_ENV_PROVIDED = {"minecraft", "java", "fabricloader", "fabric-loader", "mixinextras"}
+# Satisfied by the runtime/loader, never shipped as a candidate jar.
+_ENV_PROVIDED = {
+    "minecraft",
+    "java",
+    "fabricloader",
+    "fabric-loader",
+    "mixinextras",
+    "quilt_loader",
+    "forge",
+    "neoforge",
+    "fml",
+    "javafml",
+}
 
 
 def _partition[T](items: list[T], n: int) -> list[list[T]]:
@@ -104,9 +115,12 @@ def bisect_set(request: RunRequest, profile: VersionProfile) -> BisectResult:
         )
 
     base, candidates, jar_to_id = _split_base_candidates(folder, profile.profile)
+    loader = request.loader or detect_loader(folder)
     boots = 0
 
-    full = boot_jars(base + candidates, profile, request.timeout_seconds, request.memory)
+    full = boot_jars(
+        base + candidates, profile, request.timeout_seconds, request.memory, loader=loader
+    )
     boots += 1
     if full.status == "error":
         return _result("error", profile, start, cause=full.cause, boots=boots)
@@ -129,7 +143,9 @@ def bisect_set(request: RunRequest, profile: VersionProfile) -> BisectResult:
     def reproduces(subset: list[Path]) -> bool:
         nonlocal boots
         boots += 1
-        verdict = boot_jars(base + subset, profile, request.timeout_seconds, request.memory)
+        verdict = boot_jars(
+            base + subset, profile, request.timeout_seconds, request.memory, loader=loader
+        )
         return (
             verdict.status == "crash"
             and verdict.cause is not None
@@ -148,7 +164,9 @@ def bisect_set(request: RunRequest, profile: VersionProfile) -> BisectResult:
 
     minimal = ddmin(candidates, reproduces)
     members = sorted(jar_to_id.get(path.name, path.name) for path in minimal)
-    final = boot_jars(base + minimal, profile, request.timeout_seconds, request.memory)
+    final = boot_jars(
+        base + minimal, profile, request.timeout_seconds, request.memory, loader=loader
+    )
     boots += 1
     note = (
         None

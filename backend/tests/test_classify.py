@@ -56,6 +56,28 @@ def test_fabric_resolution_banner_without_detail() -> None:
     assert cause.category == "missing_dependency"
 
 
+def test_forge_fml_missing_dependency() -> None:
+    log = (
+        "Missing or unsupported mandatory dependencies:\n"
+        "\tMod ID: 'jei', Requested by: 'somemod', Expected range: '[15,)', "
+        "Actual version: '[MISSING]'"
+    )
+    cause = extract_cause(log)
+    assert cause.category == "missing_dependency"
+    assert cause.mods == ["jei"]
+
+
+def test_neoforge_mandatory_deps_banner_only() -> None:
+    cause = extract_cause("Missing or unsupported mandatory dependencies: see log")
+    assert cause.category == "missing_dependency"
+
+
+def test_forge_found_duplicate_mods() -> None:
+    cause = extract_cause("Found duplicate mods:\n\tjei")
+    assert cause.category == "duplicate_mod"
+    assert cause.mods == ["jei"]
+
+
 def test_generic_exception_falls_back_to_startup_error() -> None:
     log = (
         "[Server thread/ERROR]: Encountered an unexpected exception\n"
