@@ -63,6 +63,28 @@ def test_build_plan_default_priorities_and_summary() -> None:
     assert "tag overlap" in plan.summary
 
 
+def test_build_plan_families_tags_only_skips_recipes() -> None:
+    conflicts = [
+        _tag_overlap("c:ingots/tin", ["a", "b"]),
+        _recipe_collision("minecraft:torch", ["a", "b"]),
+    ]
+    plan = build_resolution_plan(PROFILE, conflicts, families=["tags"])
+    paths = {f.path for f in plan.files}
+    assert UNIFY_PATH in paths
+    assert not any(p.startswith("emendator-overrides/") for p in paths)
+
+
+def test_build_plan_families_recipes_only_skips_tags() -> None:
+    conflicts = [
+        _tag_overlap("c:ingots/tin", ["a", "b"]),
+        _recipe_collision("minecraft:torch", ["a", "b"]),
+    ]
+    plan = build_resolution_plan(PROFILE, conflicts, families=["recipes"])
+    paths = {f.path for f in plan.files}
+    assert UNIFY_PATH not in paths
+    assert "emendator-overrides/pack.mcmeta" in paths
+
+
 def test_build_plan_empty_when_no_resolvable_conflicts() -> None:
     plan = build_resolution_plan(
         PROFILE, [Conflict(type="mixin_overlap", severity="info", members=["a", "b"])]

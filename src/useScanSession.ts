@@ -22,7 +22,6 @@ export type Tab =
   | "scan"
   | "overview"
   | "conflicts"
-  | "recipes"
   | "runtime"
   | "resolution"
   | "resourcepacks"
@@ -34,10 +33,13 @@ export const TABS: { id: Tab; label: string }[] = [
   { id: "scan", label: "Scan" },
   { id: "overview", label: "Overview" },
   { id: "conflicts", label: "Conflicts" },
-  { id: "recipes", label: "Recipes" },
   { id: "runtime", label: "Runtime" },
   { id: "resolution", label: "Resolution" },
 ];
+
+// Sub-tabs of the Resolution hub: one conflict family each. Mirrors the
+// Runtime view's Test/Bisect split.
+export type ResolutionSub = "mixins" | "recipes" | "tags" | "deps";
 
 export interface VersionOption {
   value: string;
@@ -281,6 +283,9 @@ export function useScanSession() {
   const [path, setPath] = useState("");
   const [dragging, setDragging] = useState(false);
   const [tab, setTab] = useState<Tab>("scan");
+  // The active Resolution sub-tab, lifted here so the Runtime→Resolution handoff
+  // can target one (e.g. send a missing-dependency verdict straight to Deps).
+  const [resolutionSub, setResolutionSub] = useState<ResolutionSub>("mixins");
   // Jars updated in place this session. Lives here (not in the mods panel) so the
   // "to update" count survives leaving and re-entering that panel; every scan
   // replaces result.mods with fresh updateAvailable flags, so we clear it then.
@@ -369,6 +374,13 @@ export function useScanSession() {
 
   const contentTabs = buildContentTabs(report);
 
+  // Runtime → Resolution handoff: jump to the Deps sub-tab to install the mods a
+  // boot flagged as missing (the installer now lives under Resolution).
+  const resolveMissingDeps = useCallback(() => {
+    setResolutionSub("deps");
+    setTab("resolution");
+  }, []);
+
   return {
     backendDown,
     path,
@@ -394,8 +406,10 @@ export function useScanSession() {
     onTest,
     onBisect,
     versionOptions,
-    recipeCount,
     conflictCount,
     contentTabs,
+    resolutionSub,
+    setResolutionSub,
+    resolveMissingDeps,
   };
 }

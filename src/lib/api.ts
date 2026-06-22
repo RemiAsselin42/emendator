@@ -252,16 +252,25 @@ async function postJson<T>(endpoint: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function resolvePreview(path: string, version?: string): Promise<ResolutionPlan> {
-  return postJson<ResolutionPlan>("/resolve/preview", { path, version });
+// Which conflict family the no-code generator targets; the Tags and Recipes
+// resolution sub-tabs each request only their own (omitted = all).
+export type ResolutionFamily = "tags" | "recipes";
+
+export function resolvePreview(
+  path: string,
+  version?: string,
+  families?: ResolutionFamily[],
+): Promise<ResolutionPlan> {
+  return postJson<ResolutionPlan>("/resolve/preview", { path, version, families });
 }
 
 export function resolveExport(
   path: string,
   outDir: string,
   version?: string,
+  families?: ResolutionFamily[],
 ): Promise<ExportResult> {
-  return postJson<ExportResult>("/resolve/export", { path, outDir, version });
+  return postJson<ExportResult>("/resolve/export", { path, outDir, version, families });
 }
 
 export function testSet(path: string, version?: string): Promise<RunVerdict> {

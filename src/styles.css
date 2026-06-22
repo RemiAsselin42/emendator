@@ -1282,3 +1282,10 @@ a:hover {
 .mixin-disable-error {
   color: var(--color-primary);
 }
+
+/* Runtime → Resolution handoff under a missing-dependency verdict. */
+.resolve-handoff {
+  margin-top: var(--space-sm);
+  align-self: flex-start;
+  padding: 4px var(--space-sm);
+}

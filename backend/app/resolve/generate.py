@@ -13,7 +13,7 @@ All functions are pure (conflicts -> file artifacts); writing to disk is
 import json
 from pathlib import Path
 
-from app.models import Conflict, GeneratedFile, ResolutionPlan
+from app.models import Conflict, GeneratedFile, ResolutionFamily, ResolutionPlan
 from app.profile import VersionProfile
 
 UNIFY_PATH = "config/almostunified/unify.json"
@@ -83,10 +83,14 @@ def build_resolution_plan(
     profile: VersionProfile,
     conflicts: list[Conflict],
     mod_priorities: list[str] | None = None,
+    families: list[ResolutionFamily] | None = None,
 ) -> ResolutionPlan:
-    """Assemble every resolution artifact for the resolvable conflicts."""
-    tag_overlaps = [c for c in conflicts if c.type == "tag_overlap"]
-    recipe_collisions = [c for c in conflicts if c.type == "recipe_collision"]
+    """Assemble the resolution artifacts for the requested families (default: all)."""
+    want = set(families) if families is not None else {"tags", "recipes"}
+    tag_overlaps = [c for c in conflicts if c.type == "tag_overlap"] if "tags" in want else []
+    recipe_collisions = (
+        [c for c in conflicts if c.type == "recipe_collision"] if "recipes" in want else []
+    )
     priorities = mod_priorities or _unify_default_priorities(tag_overlaps)
 
     files: list[GeneratedFile] = []
