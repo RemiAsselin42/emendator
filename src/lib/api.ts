@@ -160,12 +160,53 @@ export interface ExportResult {
   written: string[];
 }
 
+export type UpdateStatus = "updated" | "no_update" | "not_found" | "error";
+
+export interface UpdateResult {
+  status: UpdateStatus;
+  oldJar: string | null;
+  newJar: string | null;
+  version: string | null;
+  message: string | null;
+}
+
+/** Update one jar to its latest Modrinth version, in place (downloads + swaps). */
+export function updateMod(
+  path: string,
+  jar: string,
+  version?: string,
+  loader?: Loader,
+): Promise<UpdateResult> {
+  return postJson<UpdateResult>("/mods/update", { path, jar, version, loader });
+}
+
+export type InstallStatus = "installed" | "not_found" | "error";
+
+export interface InstallResult {
+  status: InstallStatus;
+  modId: string;
+  jar: string | null;
+  version: string | null;
+  message: string | null;
+}
+
+/** Install a dependency the runner flagged as missing, by its mod id (downloads
+ *  the matching Modrinth version into the mods folder). */
+export function installMod(
+  path: string,
+  modId: string,
+  version?: string,
+  loader?: Loader,
+): Promise<InstallResult> {
+  return postJson<InstallResult>("/mods/install", { path, modId, version, loader });
+}
+
 /** Raised when /mods/scan returns 409: the set spans incompatible version
  *  blocks and the user must pick one before scanning. */
 export class AmbiguousVersionError extends Error {
   detection: VersionDetection;
   constructor(detection: VersionDetection) {
-    super("Ambiguous Minecraft version — pick one to continue");
+    super("Ambiguous Minecraft version - pick one to continue");
     this.name = "AmbiguousVersionError";
     this.detection = detection;
   }
@@ -212,12 +253,6 @@ export async function listProfiles(): Promise<VersionCandidate[]> {
   const res = await fetch(`${BASE}/profiles`);
   if (!res.ok) throw await httpError(res);
   return res.json() as Promise<VersionCandidate[]>;
-}
-
-/** Scan a folder. With no `version` the backend auto-detects; an ambiguous set
- *  rejects with 409, surfaced here as {@link AmbiguousVersionError}. */
-export async function scanMods(path: string, version?: string): Promise<ScanResult> {
-  return scanAt<ScanResult>("/mods/scan", path, version);
 }
 
 // --- Instances (launcher-native ingestion) -------------------------------
@@ -302,14 +337,23 @@ export function detectInstance(path: string): Promise<Instance> {
   return postJson<Instance>("/instance/detect", { path });
 }
 
+/** Modpack instances auto-discovered from known launcher install locations
+ *  (CurseForge, Modrinth, Prism, MultiMC, vanilla) — for quick-select. */
+export async function discoverInstances(): Promise<Instance[]> {
+  const res = await fetch(`${BASE}/instances/discover`);
+  if (!res.ok) throw await httpError(res);
+  return res.json() as Promise<Instance[]>;
+}
+
 /** Scan an instance (launcher root or bare `mods/` folder) into a full report:
- *  the mod conflict map plus content-pack sections. Same 409 contract as
- *  {@link scanMods}; mods and content folders are located automatically. */
+ *  the mod conflict map plus content-pack sections. Ambiguous version sets
+ *  reject with 409 as {@link AmbiguousVersionError}; mods and content folders
+ *  are located automatically. */
 export function scanInstance(path: string, version?: string): Promise<InstanceReport> {
   return scanAt<InstanceReport>("/instance/scan", path, version);
 }
 
-/** Shared body of scanMods / scanInstance: POST + 409 → AmbiguousVersionError. */
+/** Shared body of the scan endpoints: POST + 409 → AmbiguousVersionError. */
 async function scanAt<T>(endpoint: string, path: string, version?: string): Promise<T> {
   const res = await fetch(`${BASE}${endpoint}`, {
     method: "POST",

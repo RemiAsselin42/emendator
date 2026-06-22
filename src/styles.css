@@ -2,17 +2,19 @@
    One background, one accent (gold), one radius, one transition. Elements are
    separated by borders, never by stacked backgrounds or shadows. */
 :root {
-  --color-primary: #deb841; /* gold — sole driver of interaction */
-  --color-secondary: #de9e36; /* orange — hover slide of the gold */
-  --color-background: #181719; /* mauve grey — global background */
-  --color-surface: #6d6a75; /* light mauve grey — borders + rare secondary surface */
-  --color-text: #f8f5fc; /* mauve white — text on dark */
-  --color-on-accent: #37323e; /* dark text on gold/orange accents */
+  --color-primary: #61c970;
+  --color-secondary: #2d8848; /* hover */
+  --color-background: #171917; /* green grey — global background */
+  --color-surface: #404741; /* light green grey — borders + rare secondary surface */
+  --color-text: #dde1de; /* grey white — text on dark */
+  --color-on-accent: #37323e; /* dark text on green accents */
+  --color-warn: #e3b341; /* amber — soft outcomes (no update / not on provider) */
+  --color-error: #e5534b; /* red — hard failures (update actually failed) */
 
   --font-title: "Poltawski Nowy", serif;
   --font-body: "Host Grotesk", system-ui, sans-serif;
 
-  --radius: 8px;
+  --radius: 0px;
   --space-sm: 8px;
   --space-md: 16px;
   --space-lg: 24px;
@@ -80,7 +82,7 @@ a:hover {
 .container {
   max-width: 1080px;
   margin: 0 auto;
-  padding: var(--space-lg);
+  padding: var(--space-lg) var(--space-lg) var(--space-md);
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
@@ -209,6 +211,7 @@ a:hover {
 .scan-error {
   color: var(--color-secondary);
   font-size: 1rem;
+  margin: 0;
 }
 
 /* Manual version picker shown when detection is ambiguous (§6). */
@@ -251,7 +254,7 @@ a:hover {
 }
 
 .mc-version select {
-  padding: 7px var(--space-md);
+  padding: 7px 0 7px 3px;
   background: var(--color-background);
   color: var(--color-primary);
   border: var(--border);
@@ -411,7 +414,7 @@ a:hover {
    The 12rem offset covers the header + container padding above the view; the
    controls/count/notes keep their natural height and the list takes the rest. */
 .view-mods {
-  height: calc(100dvh - 12rem);
+  height: calc(100dvh - 13rem);
   min-height: 320px;
 }
 
@@ -493,6 +496,16 @@ a:hover {
   word-break: break-word;
 }
 
+.mod-name > a {
+  text-decoration: none;
+  color: var(--color-text);
+}
+
+.mod-name > a:hover {
+  text-decoration: underline;
+  color: var(--color-primary);
+}
+
 .mod-slug {
   font-size: 1rem;
   opacity: 0.6;
@@ -516,6 +529,14 @@ a:hover {
   opacity: 1;
 }
 
+/* Right side of the card header: the chips, then the update button furthest right. */
+.mod-card-right {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
 /* Loader + environment chips sit together at the card's top-right. */
 .mod-card-tags {
   display: flex;
@@ -536,19 +557,93 @@ a:hover {
 }
 
 /* "update available" badge sits with the id; gold so it reads as actionable. */
+/* "update available" download-icon button: updates the jar in place. max-width
+   is set so the "gone" state can animate the whole button (incl. padding/border)
+   to zero width. */
 .mod-update {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  padding: 2px var(--space-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  max-width: 3rem;
+  padding: calc(var(--space-md) - 7px);
   border: 2px solid var(--color-primary);
   border-radius: var(--radius);
+  background: none;
   color: var(--color-primary);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.mod-update:hover:not(:disabled) {
+  background: var(--color-primary);
+  color: var(--color-on-accent);
+}
+
+.mod-update-updating {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.mod-update-done,
+.mod-update-gone {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-on-accent);
+  cursor: default;
+}
+
+/* Collapse out: width (and its box) shrinks to nothing, absorbing the flex gap. */
+.mod-update-gone {
+  max-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  border-width: 0;
+  opacity: 0;
+  margin-left: calc(-1 * var(--space-sm));
+}
+
+/* Failure feedback on the update button. Warn (amber) = the run finished without
+   installing anything but nothing broke (no Modrinth match, already latest);
+   error (red) = the update actually failed (jar gone, download/checksum/install).
+   Both stay clickable to retry, so they keep a hover fill. */
+.mod-update-warn {
+  border-color: var(--color-warn);
+  color: var(--color-warn);
+}
+
+.mod-update-warn:hover:not(:disabled) {
+  background: var(--color-warn);
+  color: var(--color-on-accent);
+}
+
+.mod-update-error {
+  border-color: var(--color-error);
+  color: var(--color-error);
+}
+
+.mod-update-error:hover:not(:disabled) {
+  background: var(--color-error);
+  color: var(--color-on-accent);
+}
+
+/* Spinner shown while an update is downloading. */
+.spin {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mod-spin 0.7s linear infinite;
+}
+
+@keyframes mod-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Key/value metadata grid. */
 .mod-meta {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); /* responsive, 1-3 columns */
   gap: var(--space-md);
   margin: 0;
 }
@@ -558,10 +653,6 @@ a:hover {
   flex-direction: column;
   gap: var(--space-sm);
   min-width: 0;
-}
-
-.mod-field-wide {
-  grid-column: 1 / -1;
 }
 
 .mod-field dt {
@@ -574,6 +665,9 @@ a:hover {
 .mod-field dd {
   margin: 0;
   font-size: 1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mod-jar {
@@ -619,6 +713,29 @@ a:hover {
   opacity: 0.6;
 }
 
+/* Card for a jar that failed analysis: same card chrome, but a secondary border
+   and an "unreadable" badge mark it, with the parse error shown inside. */
+.mod-card-error {
+  border-color: var(--color-secondary);
+}
+
+.mod-error-badge {
+  flex-shrink: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: var(--space-sm);
+  border: 2px solid var(--color-secondary);
+  border-radius: var(--radius);
+  color: var(--color-secondary);
+  text-transform: capitalize;
+}
+
+.mod-error-reason {
+  margin: 0;
+  color: var(--color-secondary);
+  word-break: break-word;
+}
+
 .panel-title {
   font-size: 1.25rem;
   margin-bottom: var(--space-md);
@@ -631,6 +748,87 @@ a:hover {
   grid-template-columns: 200px 1fr;
   gap: var(--space-lg);
   align-items: start;
+}
+
+/* Before the first scan: no sidebar, the import panel spans the full width. */
+.layout-solo {
+  grid-template-columns: 1fr;
+}
+
+/* Quick-select: auto-discovered modpacks under the import zone. */
+.quick-select {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.quick-title {
+  font-size: 1.5rem;
+}
+
+.quick-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-md);
+  margin-top: var(--space-sm);
+}
+
+.quick-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: none;
+  border: var(--border);
+  border-radius: var(--radius);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  text-align: left;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.quick-card:hover:not(:disabled) {
+  border-color: var(--color-primary);
+}
+
+.quick-card:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.quick-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.quick-name {
+  font-weight: 600;
+  word-break: break-word;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.quick-source {
+  flex-shrink: 0;
+  font-size: 0.8125rem;
+  color: var(--color-primary);
+}
+
+.quick-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  font-size: 0.875rem;
+  opacity: 0.7;
+}
+
+.quick-loader {
+  text-transform: capitalize;
 }
 
 /* Left menu — one column of buttons, sticky so it stays visible on scroll. */
@@ -692,50 +890,19 @@ a:hover {
   gap: var(--space-md);
 }
 
-/* Overview stat cards. Numbers stay neutral; gold is reserved for action. */
-.stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: var(--space-md);
-}
-
-/* Stat cards double as nav buttons (jump to the relevant section); the gold
-   border on hover is the interaction signal. */
-.stat {
-  border: var(--border);
-  border-radius: var(--radius);
-  padding: var(--space-md);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: var(--transition);
-}
-
-.stat:hover {
-  border-color: var(--color-primary);
-}
-
-.stat-n {
-  font-family: var(--font-title);
-  font-size: 2rem;
-  line-height: 1;
-}
-
-.stat-l {
-  font-size: 1rem;
-  opacity: 0.8;
-}
-
 /* Severity filter chips. Active chip = gold border + its severity color. */
 .filters {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-sm);
+}
+
+/* Sub-tab bar inside a panel (e.g. Runtime → Test | Bisect): a horizontal row of
+   chip toggles, separated from the section below by a border. */
+.subtabs {
+  display: flex;
+  gap: var(--space-sm);
+  border-bottom: 2px solid var(--color-primary);
 }
 
 .chip {
@@ -750,12 +917,31 @@ a:hover {
   transition: var(--transition);
 }
 
+.chip-on {
+  border-color: var(--color-primary);
+}
+
+.subtabs > .chip:not(.chip-on) {
+  background: var(--color-background);
+  border-bottom: none;
+}
+
+.subtabs > .chip-on {
+  transform: translateY(2px);
+  height: calc(100% + 2px);
+  border-bottom: none;
+  background: var(--color-background);
+}
+
 .chip:hover {
   color: var(--color-primary);
 }
 
-.chip-on {
-  border-color: var(--color-primary);
+/* The "errors" quick filter signals in secondary (the parse-problem color), so
+   an active errors chip reads apart from the gold env/update chips. */
+.chip-error.chip-on {
+  border-color: var(--color-secondary);
+  color: var(--color-secondary);
 }
 
 /* --- Conflict map: grouped by consequence (§9) --------------------------
@@ -926,6 +1112,8 @@ a:hover {
   opacity: 0.9;
 }
 
+/* Runtime tab: the runner row, verdict status, and any missing-dependency
+   installer. */
 .runner {
   display: flex;
   align-items: center;
@@ -949,6 +1137,18 @@ a:hover {
   font-weight: 600;
 }
 
+.note.cause-mods {
+  color: var(--color-primary);
+  text-transform: capitalize;
+  opacity: 1;
+}
+
+.cause-excerpt,
+.log-tail {
+  font-family: var(--font-body);
+  padding: var(--space-md) 0 0 0;
+}
+
 .log {
   font-family: var(--font-body);
   font-size: 1rem;
@@ -959,6 +1159,41 @@ a:hover {
   padding: var(--space-sm);
   max-height: 240px;
   overflow: auto;
+}
+
+/* Missing-dependency installer under a runtime verdict: one row per flagged mod,
+   each with a download-icon button (reusing the .mod-update visuals). */
+.missing-deps {
+  margin: var(--space-sm) 0 var(--space-md);
+}
+
+.install-all {
+  margin-top: var(--space-sm);
+  align-self: flex-start;
+}
+
+.missing-list {
+  list-style: none;
+  margin: var(--space-sm) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.missing-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.missing-id {
+  font-family: var(--font-body);
+  font-weight: 500;
+}
+
+.missing-msg {
+  word-break: break-word;
 }
 
 /* Severity: gold is the conflict signal (DESIGN.md), reserved for errors. */
@@ -978,9 +1213,4 @@ a:hover {
 .note {
   font-size: 1rem;
   opacity: 0.8;
-}
-
-.errors li {
-  color: var(--color-secondary);
-  font-size: 1rem;
 }

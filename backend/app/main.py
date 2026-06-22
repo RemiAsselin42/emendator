@@ -8,10 +8,13 @@ from app.analyzer.packs import scan_datapacks, scan_resourcepacks, scan_shaderpa
 from app.analyzer.registry_index import build_registry_index
 from app.config import settings
 from app.enrich import enrich_mods
+from app.enrich.install import install_mod, update_mod
 from app.models import (
     BisectResult,
     ExportRequest,
     ExportResult,
+    InstallRequest,
+    InstallResult,
     Instance,
     InstanceReport,
     ResolutionPlan,
@@ -20,6 +23,8 @@ from app.models import (
     RunVerdict,
     ScanRequest,
     ScanResult,
+    UpdateRequest,
+    UpdateResult,
     VersionCandidate,
     VersionDetection,
 )
@@ -31,7 +36,8 @@ from app.profile import (
 )
 from app.resolve.generate import build_resolution_plan, export_plan
 from app.runner.bisect import bisect_set
-from app.runner.runner import run_set
+from app.runner.runner import detect_loader, run_set
+from app.sources.discovery import discover_instances
 from app.sources.instance import detect_instance, mods_jars
 
 app = FastAPI(title="Emendator backend", version="0.1.0")
@@ -120,6 +126,17 @@ def scan_mods(req: ScanRequest) -> ScanResult:
     return result
 
 
+@app.get("/instances/discover", response_model=list[Instance])
+def instances_discover() -> list[Instance]:
+    """List modpack instances installed by known launchers (for quick-select).
+
+    Scans CurseForge / Modrinth / Prism / MultiMC / vanilla locations and returns
+    the ones with mods; best-effort, so it's empty rather than failing when none
+    are found.
+    """
+    return discover_instances()
+
+
 @app.post("/instance/detect", response_model=Instance)
 def instance_detect(req: ScanRequest) -> Instance:
     """Classify a dropped path (launcher instance or bare ``mods/`` folder).
@@ -164,6 +181,33 @@ def instance_scan(req: ScanRequest) -> InstanceReport:
         datapack_conflicts=dp_conflicts,
         items=build_registry_index(jars),
     )
+
+
+@app.post("/mods/update", response_model=UpdateResult)
+def mods_update(req: UpdateRequest) -> UpdateResult:
+    """Update one jar in a mods folder to its latest Modrinth version, in place.
+
+    Explicit user action: downloads, verifies the checksum, swaps the jar and
+    removes the old one. The mods folder is left untouched on any failure.
+    """
+    mods_dir = _require_dir(req.path)
+    loader = req.loader or detect_loader(mods_dir)
+    game_version = req.version or _resolve_for(mods_dir, None)[0].profile
+    return update_mod(mods_dir, req.jar, loader, game_version)
+
+
+@app.post("/mods/install", response_model=InstallResult)
+def mods_install(req: InstallRequest) -> InstallResult:
+    """Install a dependency the runner flagged as missing, from Modrinth, in place.
+
+    Explicit user action from the runtime verdict: resolves the missing mod id to
+    a Modrinth project, downloads the version matching the pack's loader + MC
+    version, verifies the checksum and adds the jar. No-op on any failure.
+    """
+    mods_dir = _require_dir(req.path)
+    loader = req.loader or detect_loader(mods_dir)
+    game_version = req.version or _resolve_for(mods_dir, None)[0].profile
+    return install_mod(mods_dir, req.mod_id, loader, game_version)
 
 
 @app.post("/runner/test", response_model=RunVerdict)

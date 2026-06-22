@@ -267,6 +267,58 @@ class ExportResult(CamelModel):
     written: list[str] = []
 
 
+# --- In-place mod update (download the latest version) --------------------
+
+# updated = jar replaced; no_update = already latest; not_found = no provider
+# match; error = something went wrong (no change made).
+UpdateStatus = Literal["updated", "no_update", "not_found", "error"]
+
+
+class UpdateRequest(CamelModel):
+    """Body of ``POST /mods/update``: update one jar in a mods folder."""
+
+    path: str  # the mods folder containing the jar
+    jar: str  # current jar filename
+    version: str | None = None  # exact MC version to match (else detected)
+    loader: Loader | None = None  # loader to match (else detected)
+
+
+class UpdateResult(CamelModel):
+    """Outcome of an in-place mod update."""
+
+    status: UpdateStatus
+    old_jar: str | None = None
+    new_jar: str | None = None
+    version: str | None = None  # the version number installed
+    message: str | None = None
+
+
+# --- Install a missing dependency (the runner flags it; we fetch it) ---------
+
+# installed = jar fetched and added; not_found = no provider match (or a platform
+# pseudo-dependency); error = something went wrong (no change made).
+InstallStatus = Literal["installed", "not_found", "error"]
+
+
+class InstallRequest(CamelModel):
+    """Body of ``POST /mods/install``: install a missing dependency by its mod id."""
+
+    path: str  # the mods folder to install into
+    mod_id: str  # the dependency id the runner reported missing
+    version: str | None = None  # exact MC version to match (else detected)
+    loader: Loader | None = None  # loader to match (else detected)
+
+
+class InstallResult(CamelModel):
+    """Outcome of installing a missing dependency into a mods folder."""
+
+    status: InstallStatus
+    mod_id: str
+    jar: str | None = None  # the filename that was written
+    version: str | None = None  # the version number installed
+    message: str | None = None
+
+
 # --- Instances (launcher-native ingestion) -------------------------------
 
 # Where the dropped folder comes from. "raw_mods" = a bare mods/ folder (the

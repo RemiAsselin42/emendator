@@ -4,6 +4,7 @@ import {
   type BisectResult,
   bisectSet,
   detectInstance,
+  discoverInstances,
   fetchHealth,
   type Instance,
   type InstanceReport,
@@ -104,6 +105,16 @@ export default function App() {
   const [pendingDetection, setPendingDetection] = useState<VersionDetection | null>(null);
   // Version blocks offered in the manual override (§6).
   const [profiles, setProfiles] = useState<VersionCandidate[]>([]);
+  // Modpacks auto-discovered from installed launchers (quick-select).
+  const [discovered, setDiscovered] = useState<Instance[]>([]);
+  // Jars updated in place this session. Lives here (not in the mods panel) so the
+  // "to update" count survives leaving and re-entering that panel; every scan
+  // replaces result.mods with fresh updateAvailable flags, so we clear it then.
+  const [updatedJars, setUpdatedJars] = useState<Set<string>>(new Set());
+  const markUpdated = useCallback(
+    (jar: string) => setUpdatedJars((prev) => (prev.has(jar) ? prev : new Set(prev).add(jar))),
+    [],
+  );
 
   // Poll the sidecar so the toast reflects the live state: it appears when a
   // check fails and clears itself when the backend comes back.
@@ -128,6 +139,13 @@ export default function App() {
       .catch(() => setProfiles([]));
   }, []);
 
+  // Discover installed modpacks once, for the quick-select list (best-effort).
+  useEffect(() => {
+    discoverInstances()
+      .then((list) => setDiscovered(Array.isArray(list) ? list : []))
+      .catch(() => setDiscovered([]));
+  }, []);
+
   // `pick` is the user's manual version choice from the ambiguity picker; when
   // absent the backend auto-detects (and rejects an ambiguous set with 409).
   const runScan = useCallback(async (target: string, pick?: string) => {
@@ -147,6 +165,7 @@ export default function App() {
       const scanReport = await scanInstance(trimmed, pick);
       setReport(scanReport);
       setResult(scanReport.mods);
+      setUpdatedJars(new Set());
       setInstance(scanReport.instance);
       setVersion(scanReport.mods.profile);
       setTab("overview");
@@ -283,11 +302,23 @@ export default function App() {
         count: report.resourcepacks.length,
       });
     if (report.datapacks.length > 0)
-      contentTabs.push({ id: "datapacks", label: "Datapacks", count: report.datapacks.length });
+      contentTabs.push({
+        id: "datapacks",
+        label: "Datapacks",
+        count: report.datapacks.length,
+      });
     if (report.shaderpacks.length > 0)
-      contentTabs.push({ id: "shaders", label: "Shaders", count: report.shaderpacks.length });
+      contentTabs.push({
+        id: "shaders",
+        label: "Shaders",
+        count: report.shaderpacks.length,
+      });
     if (report.items.total > 0)
-      contentTabs.push({ id: "items", label: "Items", count: report.items.total });
+      contentTabs.push({
+        id: "items",
+        label: "Items",
+        count: report.items.total,
+      });
   }
 
   return (
@@ -326,32 +357,35 @@ export default function App() {
         )}
       </header>
 
-      <div className="layout">
-        <nav className="sidebar" aria-label="panels">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={tab === t.id ? "nav-item nav-item-active" : "nav-item"}
-              onClick={() => setTab(t.id)}
-              disabled={t.id !== "scan" && !result}
-            >
-              {t.label}
-              {result && t.id === "conflicts" && ` (${conflictCount})`}
-              {result && t.id === "recipes" && ` (${recipeCount})`}
-            </button>
-          ))}
-          {contentTabs.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={tab === t.id ? "nav-item nav-item-active" : "nav-item"}
-              onClick={() => setTab(t.id)}
-            >
-              {t.label} ({t.count})
-            </button>
-          ))}
-        </nav>
+      {/* Before the first scan there's nothing to navigate — show only the import
+          panel; the sidebar appears once a scan produces a result. */}
+      <div className={result ? "layout" : "layout layout-solo"}>
+        {result && (
+          <nav className="sidebar" aria-label="panels">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={tab === t.id ? "nav-item nav-item-active" : "nav-item"}
+                onClick={() => setTab(t.id)}
+              >
+                {t.label}
+                {t.id === "conflicts" && ` (${conflictCount})`}
+                {t.id === "recipes" && ` (${recipeCount})`}
+              </button>
+            ))}
+            {contentTabs.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={tab === t.id ? "nav-item nav-item-active" : "nav-item"}
+                onClick={() => setTab(t.id)}
+              >
+                {t.label} ({t.count})
+              </button>
+            ))}
+          </nav>
+        )}
 
         <div className="content">
           {tab === "scan" && (
@@ -385,11 +419,44 @@ export default function App() {
             </section>
           )}
 
+          {tab === "scan" && discovered.length > 0 && (
+            <section className="quick-select" aria-label="installed modpacks">
+              <h2 className="quick-title">Quick select</h2>
+              <p className="note">Modpacks found on this PC</p>
+              <div className="quick-list">
+                {discovered.map((inst) => (
+                  <button
+                    key={inst.root}
+                    type="button"
+                    className="quick-card"
+                    disabled={scanning}
+                    onClick={() => {
+                      setPath(inst.root);
+                      void runScan(inst.root);
+                    }}
+                  >
+                    <span className="quick-card-head">
+                      <span className="quick-name">{inst.name ?? inst.root}</span>
+                      <span className="quick-source">{SOURCE_LABEL[inst.source]}</span>
+                    </span>
+                    <span className="quick-meta">
+                      {inst.loader !== "unknown" && (
+                        <span className="quick-loader">{inst.loader}</span>
+                      )}
+                      {inst.mcVersion && <span>{inst.mcVersion}</span>}
+                      <span>{inst.modCount} mods</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
           {tab === "scan" && pendingDetection && (
             <section className="version-picker" aria-label="pick Minecraft version">
               <p className="scan-error">
                 Couldn't pin the Minecraft version automatically
-                {pendingDetection.candidates.length > 0 ? " — these mods don't agree on one." : "."}{" "}
+                {pendingDetection.candidates.length > 0 ? ", these mods don't agree on one." : "."}{" "}
                 Pick the target to scan:
               </p>
               <div className="picker-options">
@@ -418,7 +485,9 @@ export default function App() {
 
           {result && tab !== "scan" && (
             <div className="panel-content">
-              {tab === "overview" && <Overview result={result} onNavigate={setTab} />}
+              {tab === "overview" && (
+                <Overview result={result} updatedJars={updatedJars} onUpdated={markUpdated} />
+              )}
               {tab === "conflicts" && (
                 <ConflictsView conflicts={result.conflicts} verdict={verdict} />
               )}
@@ -433,6 +502,9 @@ export default function App() {
                   bisectResult={bisectResult}
                   runnerSupported={result.detection?.runnerSupported ?? true}
                   block={result.detection?.block ?? null}
+                  modsPath={result.modsPath}
+                  version={version ?? result.profile}
+                  loader={instance?.loader}
                 />
               )}
               {tab === "resolution" && (
