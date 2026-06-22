@@ -1,5 +1,5 @@
 // Pure helpers for presenting the conflict map (PROJECT.md §9).
-import type { Conflict, Mod, Severity } from "./api";
+import type { Conflict, Loader, Mod, Severity } from "./api";
 
 export const CONFLICT_LABEL: Record<Conflict["type"], string> = {
   duplicate_jar: "duplicate jar",
@@ -136,6 +136,7 @@ export interface MixinClusterMember {
   currentVersion: string | null;
   latestVersion: string | null;
   updateAvailable: boolean;
+  dependents: number; // how many other mods depend on this one (centrality)
 }
 
 export interface MixinCluster {
@@ -144,6 +145,39 @@ export interface MixinCluster {
   targets: string[]; // shared target classes across the cluster's overlaps
   sharedMethods: string[]; // shared *method* names — the strong-conflict signal
   confirmedAtRuntime: boolean; // a target was actually transformed at boot
+  broad: boolean; // many mods co-patch one class — noise, not a pairwise pick
+}
+
+// Above this many co-patchers a cluster is a *broad co-patch* of a popular class
+// (e.g. MinecraftClient), not an actionable pairwise conflict: "disable one" is
+// meaningless when a dozen mods touch the same target. Such clusters are demoted
+// to a collapsed, informational bucket; only the small ones get the keep/disable
+// pick. The detector lists every patcher of a class as one conflict's members, so
+// the member count is the cardinality of that co-patch.
+const MIXIN_PAIRWISE_MAX = 4;
+
+// Dependency centrality: how many *other* mods depend on each mod, via an id it
+// provides (or its own id). A high count marks a load-bearing library to keep
+// rather than disable — the strongest auto-fix signal.
+function countDependents(mods: Mod[]): Map<string, number> {
+  const providerOf = new Map<string, Set<string>>(); // provided id -> provider ids
+  for (const m of mods) {
+    for (const id of [m.id, ...m.provides]) {
+      const set = providerOf.get(id) ?? new Set<string>();
+      set.add(m.id);
+      providerOf.set(id, set);
+    }
+  }
+  const out = new Map<string, number>();
+  for (const n of mods) {
+    const hit = new Set<string>(); // distinct mods n depends on (deduped across ids)
+    for (const dep of Object.keys(n.depends)) {
+      const providers = providerOf.get(dep);
+      if (providers) for (const p of providers) if (p !== n.id) hit.add(p);
+    }
+    for (const p of hit) out.set(p, (out.get(p) ?? 0) + 1);
+  }
+  return out;
 }
 
 // Build the actionable mixin clusters from the static `mixin_overlap` conflicts.
@@ -158,6 +192,7 @@ export function groupMixinClusters(
   mixinExports: Set<string> | null,
 ): MixinCluster[] {
   const byId = new Map(mods.map((m) => [m.id, m] as const));
+  const dependentsOf = countDependents(mods);
   interface Acc {
     members: string[];
     targets: Set<string>;
@@ -194,6 +229,7 @@ export function groupMixinClusters(
         currentVersion: mod?.version ?? null,
         latestVersion: mod?.latestVersion ?? null,
         updateAvailable: Boolean(mod?.updateAvailable),
+        dependents: dependentsOf.get(id) ?? 0,
       };
     });
     clusters.push({
@@ -202,11 +238,88 @@ export function groupMixinClusters(
       targets: [...acc.targets].sort(),
       sharedMethods: [...acc.methods].sort(),
       confirmedAtRuntime: acc.confirmed,
+      broad: members.length > MIXIN_PAIRWISE_MAX,
     });
   }
+  // Triage order (§7): actionable pairwise picks first, broad co-patches last;
+  // within each, runtime-confirmed first, then the smallest (most decidable) set.
   clusters.sort(
     (a, b) =>
-      Number(b.confirmedAtRuntime) - Number(a.confirmedAtRuntime) || a.key.localeCompare(b.key),
+      Number(a.broad) - Number(b.broad) ||
+      Number(b.confirmedAtRuntime) - Number(a.confirmedAtRuntime) ||
+      a.members.length - b.members.length ||
+      a.key.localeCompare(b.key),
   );
   return clusters;
+}
+
+// --- Auto-fix planner: one deterministic action per actionable cluster --------
+// Picks a single resolution by priority (PROJECT.md §7):
+//   1. dependency centrality — keep the load-bearing mod, disable the rest;
+//   2. updatability — bump the updatable mod(s) to a compatible build (a re-scan
+//      is needed after: the static map won't reflect the swapped jar);
+//   3. library role — keep the mod that provides the most ids, disable the rest.
+// A cluster where none of these singles out a winner is left to the user.
+
+export type MixinAutoFix =
+  | { kind: "disable"; keep: string; jars: string[] }
+  | { kind: "update"; jars: { jar: string; loader: Loader }[] }
+  | { kind: "none" };
+
+// The item with the strictly-highest score, or null on a tie at the top — an
+// ambiguous max can't pick a winner, so the planner falls through to the next rule.
+function uniqueMaxBy<T>(items: T[], score: (t: T) => number): T | null {
+  let best: T | null = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  let tie = false;
+  for (const it of items) {
+    const s = score(it);
+    if (s > bestScore) {
+      best = it;
+      bestScore = s;
+      tie = false;
+    } else if (s === bestScore) {
+      tie = true;
+    }
+  }
+  return tie ? null : best;
+}
+
+// Disable the cluster's losers — but only the *leaves* (mods nothing else depends
+// on, `dependents === 0`). A mod with dependents is load-bearing: disabling it
+// would cascade-break its dependents (and the Deps tab would just offer to
+// reinstall it), so it is never auto-disabled even when it loses the keep
+// decision. "none" if that leaves nothing safe to disable (jar-less or all
+// load-bearing losers) — the cluster then falls through to the next rule / user.
+function disableLosers(members: MixinClusterMember[], keep: string): MixinAutoFix {
+  const jars = members
+    .filter((m) => m.modId !== keep && m.jar && m.dependents === 0)
+    .map((m) => m.jar as string);
+  return jars.length > 0 ? { kind: "disable", keep, jars } : { kind: "none" };
+}
+
+export function planMixinAutoFix(cluster: MixinCluster): MixinAutoFix {
+  const members = cluster.members;
+
+  // 1. dependency centrality — a uniquely most-depended-on member is the keeper.
+  const central = uniqueMaxBy(members, (m) => m.dependents);
+  if (central && central.dependents > 0) {
+    const plan = disableLosers(members, central.modId);
+    if (plan.kind !== "none") return plan;
+  }
+
+  // 2. updatability — bump every member that has a compatible build waiting.
+  const jars = members
+    .filter((m) => m.updateAvailable && m.latestVersion && m.jar && m.mod)
+    .map((m) => ({ jar: m.jar as string, loader: (m.mod as Mod).loader }));
+  if (jars.length > 0) return { kind: "update", jars };
+
+  // 3. library role — a uniquely provides-richest member is the keeper.
+  const lib = uniqueMaxBy(members, (m) => m.mod?.provides.length ?? 0);
+  if (lib && (lib.mod?.provides.length ?? 0) > 0) {
+    const plan = disableLosers(members, lib.modId);
+    if (plan.kind !== "none") return plan;
+  }
+
+  return { kind: "none" };
 }

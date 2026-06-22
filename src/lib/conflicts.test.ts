@@ -6,6 +6,7 @@ import {
   countBySeverity,
   groupMixinClusters,
   isRuntimeConfirmed,
+  planMixinAutoFix,
 } from "./conflicts";
 
 function mk(partial: Partial<Conflict>): Conflict {
@@ -152,5 +153,164 @@ describe("groupMixinClusters", () => {
     expect(clusters).toHaveLength(1);
     expect(clusters[0].targets).toEqual(["t1", "t2"]);
     expect(clusters[0].sharedMethods).toEqual(["m1", "m2"]);
+  });
+
+  it("flags a many-mod co-patch as broad, a small one as actionable", () => {
+    const small = mk({
+      type: "mixin_overlap",
+      severity: "warning",
+      members: ["a", "b"],
+      detail: { target: "t_small", sharedMethods: ["m"] },
+    });
+    const broad = mk({
+      type: "mixin_overlap",
+      severity: "warning",
+      members: ["m1", "m2", "m3", "m4", "m5"], // > MIXIN_PAIRWISE_MAX
+      detail: { target: "t_broad", sharedMethods: ["tick"] },
+    });
+    const clusters = groupMixinClusters([broad, small], [], null);
+
+    const byTarget = Object.fromEntries(clusters.map((c) => [c.targets[0], c]));
+    expect(byTarget.t_small.broad).toBe(false);
+    expect(byTarget.t_broad.broad).toBe(true);
+  });
+
+  it("sorts actionable clusters before broad co-patches", () => {
+    // A broad co-patch that is runtime-confirmed must still rank below an
+    // unconfirmed pairwise pick — actionability wins over the confirmation flag.
+    const broadConfirmed = mk({
+      type: "mixin_overlap",
+      severity: "info",
+      members: ["a", "b", "c", "d", "e", "f"],
+      detail: { target: "net.minecraft.class_310" },
+    });
+    const pair = mk({
+      type: "mixin_overlap",
+      severity: "warning",
+      members: ["x", "y"],
+      detail: { target: "t_pair", sharedMethods: ["m"] },
+    });
+    const exports = new Set(["net.minecraft.class_310"]);
+    const clusters = groupMixinClusters([broadConfirmed, pair], [], exports);
+
+    expect(clusters.map((c) => c.broad)).toEqual([false, true]);
+    expect(clusters[0].targets).toEqual(["t_pair"]);
+    expect(clusters[1].confirmedAtRuntime).toBe(true);
+  });
+});
+
+describe("planMixinAutoFix", () => {
+  // A warning-severity same-method overlap between two mods — one actionable cluster.
+  const pair = (a: string, b: string) =>
+    mk({
+      type: "mixin_overlap",
+      severity: "warning",
+      members: [a, b].sort(),
+      detail: { target: "t", sharedMethods: ["m"] },
+    });
+
+  it("counts dependents and disables the leaf, keeping the load-bearing mod", () => {
+    const mods = [
+      mkMod({ id: "lib", jar: "lib.jar" }),
+      mkMod({ id: "consumer", jar: "consumer.jar", depends: { lib: "*" } }),
+    ];
+    const [cluster] = groupMixinClusters([pair("lib", "consumer")], mods, null);
+    expect(cluster.members.find((m) => m.modId === "lib")?.dependents).toBe(1);
+    expect(cluster.members.find((m) => m.modId === "consumer")?.dependents).toBe(0);
+    expect(planMixinAutoFix(cluster)).toEqual({
+      kind: "disable",
+      keep: "lib",
+      jars: ["consumer.jar"],
+    });
+  });
+
+  it("prefers centrality over an available update", () => {
+    const mods = [
+      mkMod({ id: "lib", jar: "lib.jar" }),
+      mkMod({
+        id: "consumer",
+        jar: "consumer.jar",
+        depends: { lib: "*" },
+        updateAvailable: true,
+        latestVersion: "2.0",
+      }),
+    ];
+    const [cluster] = groupMixinClusters([pair("lib", "consumer")], mods, null);
+    expect(planMixinAutoFix(cluster)).toEqual({
+      kind: "disable",
+      keep: "lib",
+      jars: ["consumer.jar"],
+    });
+  });
+
+  it("updates when no mod is more central", () => {
+    const mods = [
+      mkMod({ id: "a", jar: "a.jar" }),
+      mkMod({ id: "b", jar: "b.jar", updateAvailable: true, latestVersion: "2.0" }),
+    ];
+    const [cluster] = groupMixinClusters([pair("a", "b")], mods, null);
+    expect(planMixinAutoFix(cluster)).toEqual({
+      kind: "update",
+      jars: [{ jar: "b.jar", loader: "fabric" }],
+    });
+  });
+
+  it("falls back to the library role (most provides) when nothing else decides", () => {
+    const mods = [
+      mkMod({ id: "a", jar: "a.jar", provides: ["someapi"] }),
+      mkMod({ id: "b", jar: "b.jar" }),
+    ];
+    const [cluster] = groupMixinClusters([pair("a", "b")], mods, null);
+    expect(planMixinAutoFix(cluster)).toEqual({
+      kind: "disable",
+      keep: "a",
+      jars: ["b.jar"],
+    });
+  });
+
+  it("leaves an undecidable cluster to the user", () => {
+    const mods = [mkMod({ id: "a", jar: "a.jar" }), mkMod({ id: "b", jar: "b.jar" })];
+    const [cluster] = groupMixinClusters([pair("a", "b")], mods, null);
+    expect(planMixinAutoFix(cluster)).toEqual({ kind: "none" });
+  });
+
+  it("never disables a loser that other mods depend on", () => {
+    // a is more central (2 dependents) than b (1), but b is still load-bearing —
+    // disabling it would break its dependent, so the cluster is left alone.
+    const mods = [
+      mkMod({ id: "a", jar: "a.jar" }),
+      mkMod({ id: "b", jar: "b.jar" }),
+      mkMod({ id: "c", jar: "c.jar", depends: { a: "*" } }),
+      mkMod({ id: "d", jar: "d.jar", depends: { a: "*" } }),
+      mkMod({ id: "e", jar: "e.jar", depends: { b: "*" } }),
+    ];
+    const [cluster] = groupMixinClusters([pair("a", "b")], mods, null);
+    expect(cluster.members.find((m) => m.modId === "a")?.dependents).toBe(2);
+    expect(cluster.members.find((m) => m.modId === "b")?.dependents).toBe(1);
+    expect(planMixinAutoFix(cluster)).toEqual({ kind: "none" });
+  });
+
+  it("disables only the leaf loser, sparing a load-bearing one", () => {
+    const mods = [
+      mkMod({ id: "a", jar: "a.jar" }),
+      mkMod({ id: "b", jar: "b.jar" }),
+      mkMod({ id: "c", jar: "c.jar" }),
+      mkMod({ id: "dep1", jar: "dep1.jar", depends: { a: "*" } }),
+      mkMod({ id: "dep2", jar: "dep2.jar", depends: { a: "*" } }),
+      mkMod({ id: "dep3", jar: "dep3.jar", depends: { b: "*" } }),
+    ];
+    const conflict = mk({
+      type: "mixin_overlap",
+      severity: "warning",
+      members: ["a", "b", "c"],
+      detail: { target: "t", sharedMethods: ["m"] },
+    });
+    const [cluster] = groupMixinClusters([conflict], mods, null);
+    // a: 2 dependents (keeper), b: 1 (load-bearing, spared), c: 0 (leaf, disabled).
+    expect(planMixinAutoFix(cluster)).toEqual({
+      kind: "disable",
+      keep: "a",
+      jars: ["c.jar"],
+    });
   });
 });
