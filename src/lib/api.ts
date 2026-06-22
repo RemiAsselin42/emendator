@@ -143,11 +143,6 @@ export function bisectSet(path: string, version?: string): Promise<BisectResult>
 
 // --- Phase 4: no-code resolution (PROJECT.md §10, §12) -------------------
 
-export interface ExportResult {
-  outDir: string;
-  written: string[];
-}
-
 export type UpdateStatus = "updated" | "no_update" | "not_found" | "error";
 
 export interface UpdateResult {
@@ -240,10 +235,6 @@ async function postJson<T>(endpoint: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// Which conflict family the no-code generator targets; the Tags and Recipes
-// resolution sub-tabs each request only their own (omitted = all).
-export type ResolutionFamily = "tags" | "recipes";
-
 // One mod's own version of a contested recipe id (for the selection cards).
 export interface RecipeVariant {
   mod: string;
@@ -296,21 +287,56 @@ export function clearResolutionCache(): void {
   recipeVariantsCache.clear();
 }
 
-export function resolveExport(
+// --- Apply the resolution into the live instance (reversibly) -------------
+
+export type ApplyTarget = "per_world" | "openloader";
+
+export interface ResolutionTargets {
+  almostUnified: boolean; // tags via unify.json (AU) instead of a re-tag datapack
+  openLoader: boolean; // the global datapack target is available
+  worlds: string[]; // existing datapack dirs (global + per-world)
+}
+
+export interface ApplyResult {
+  status: "applied" | "nothing" | "error";
+  written: string[];
+  targets: string[];
+  manifest: string | null;
+  almostUnified: boolean;
+  openLoader: boolean;
+  message: string | null;
+}
+
+export interface RevertResult {
+  status: "reverted" | "not_found" | "error";
+  removed: string[];
+  message: string | null;
+}
+
+/** What the pack supports for applying a resolution (AU / Open Loader / worlds). */
+export function resolveTargets(path: string, version?: string): Promise<ResolutionTargets> {
+  return postJson<ResolutionTargets>("/resolve/targets", { path, version });
+}
+
+/** Write the resolution into the instance (reversibly). `path` is the instance root. */
+export function applyResolution(
   path: string,
-  outDir: string,
-  version?: string,
-  families?: ResolutionFamily[],
-  winners?: ResolutionWinners,
-): Promise<ExportResult> {
-  return postJson<ExportResult>("/resolve/export", {
+  version: string | undefined,
+  winners: ResolutionWinners,
+  target: ApplyTarget,
+): Promise<ApplyResult> {
+  return postJson<ApplyResult>("/resolve/apply", {
     path,
-    outDir,
     version,
-    families,
-    recipeWinners: winners?.recipeWinners,
-    tagWinners: winners?.tagWinners,
+    recipeWinners: winners.recipeWinners,
+    tagWinners: winners.tagWinners,
+    target,
   });
+}
+
+/** Undo a prior apply by its manifest path. */
+export function revertResolution(manifest: string): Promise<RevertResult> {
+  return postJson<RevertResult>("/resolve/revert", { manifest });
 }
 
 export function testSet(path: string, version?: string): Promise<RunVerdict> {

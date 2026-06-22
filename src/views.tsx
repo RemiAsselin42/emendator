@@ -3,13 +3,14 @@ import {
   type RefObject,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
-  useReducer,
   useRef,
   useState,
 } from "react";
+import { VirtualList } from "./components/VirtualList";
 import type {
+  ApplyResult,
+  ApplyTarget,
   BisectResult,
   Conflict,
   Datapack,
@@ -17,9 +18,8 @@ import type {
   Mod,
   ModEnvironment,
   RegistryIndex,
-  ResolutionFamily,
+  ResolutionTargets,
   ResolutionVariants,
-  ResolutionWinners,
   ResourcePack,
   RunCause,
   RunVerdict,
@@ -28,12 +28,14 @@ import type {
   ShaderPack,
 } from "./lib/api";
 import {
+  applyResolution,
   disableMod,
   enableMod,
   installMod,
   loadRecipeVariants,
   peekRecipeVariants,
-  resolveExport,
+  resolveTargets,
+  revertResolution,
   updateMod,
 } from "./lib/api";
 import {
@@ -53,8 +55,10 @@ import {
   groupMixinClusters,
   isRecipeCollision,
   isRuntimeConfirmed,
+  type MixinAutoFix,
   type MixinCluster,
   type MixinClusterMember,
+  planMixinAutoFix,
   resolutionNote,
   SEVERITY_ORDER,
 } from "./lib/conflicts";
@@ -68,7 +72,7 @@ interface TestProps {
 function TestButton({ onTest, testing, disabled }: TestProps & { disabled?: boolean }) {
   return (
     <button className="btn-primary" type="button" onClick={onTest} disabled={testing || disabled}>
-      {testing ? "booting…" : "Test this set (headless boot)"}
+      {testing ? "Booting…" : "Test this set"}
     </button>
   );
 }
@@ -728,162 +732,6 @@ type ModListEntry =
 // and replace this. Only off-screen estimates use it, so being a little off is
 // harmless — it just nudges the initial scrollbar length.
 const CARD_ESTIMATE = 120;
-const CARD_GAP = 16; // matches --space-md, the old flex gap between cards
-const OVERSCAN = 4; // cards rendered just outside the viewport, each side
-
-interface ModWindow {
-  tops: number[];
-  totalH: number;
-  start: number;
-  end: number;
-}
-
-// Pure windowing math: the cumulative top offset of every row (from the measured
-// or estimated heights, keyed), the total scroll height, and the [start, end) slice
-// intersecting the viewport plus overscan. Recomputed every render (heights is a
-// mutable ref a measure pass mutates), so it's kept pure and out of the body.
-function computeWindow(
-  keys: string[],
-  heights: Map<string, number>,
-  scrollTop: number,
-  viewportH: number,
-  estimate: number,
-): ModWindow {
-  const tops = new Array<number>(keys.length);
-  let acc = 0;
-  for (let i = 0; i < keys.length; i++) {
-    tops[i] = acc;
-    acc += (heights.get(keys[i]) ?? estimate) + CARD_GAP;
-  }
-  const totalH = keys.length > 0 ? acc - CARD_GAP : 0;
-
-  const bottom = scrollTop + viewportH;
-  let start = 0;
-  while (start < keys.length) {
-    const h = heights.get(keys[start]) ?? estimate;
-    if (tops[start] + h >= scrollTop) break;
-    start++;
-  }
-  let end = start;
-  while (end < keys.length && tops[end] <= bottom) end++;
-  start = Math.max(0, start - OVERSCAN);
-  end = Math.min(keys.length, end + OVERSCAN);
-
-  return { tops, totalH, start, end };
-}
-
-// Generic windowed list: only the rows intersecting the viewport (plus a small
-// overscan) live in the DOM. Heights are variable, so each rendered row is measured
-// and cached by key; offsets are recomputed from the cache. Drives both the mod
-// list and the resolution selection cards.
-function VirtualList<T>({
-  items,
-  keyOf,
-  estimate,
-  renderItem,
-  scrollRef,
-  className = "mods-list",
-}: {
-  items: T[];
-  keyOf: (item: T) => string;
-  estimate: number;
-  renderItem: (item: T) => ReactNode;
-  scrollRef?: RefObject<HTMLDivElement | null>;
-  className?: string;
-}) {
-  // Internal ref drives the virtualization (scroll/measure); scrollRef mirrors the
-  // same element so a parent can scroll the list to top.
-  const listRef = useRef<HTMLDivElement>(null);
-  const heights = useRef<Map<string, number>>(new Map());
-  const nodes = useRef<Map<string, HTMLDivElement>>(new Map());
-  const [scrollTop, setScrollTop] = useState(0);
-  const [viewportH, setViewportH] = useState(0);
-  const [, bump] = useReducer((n: number) => n + 1, 0);
-
-  const setNode = useCallback(
-    (key: string) => (el: HTMLDivElement | null) => {
-      if (el) nodes.current.set(key, el);
-      else nodes.current.delete(key);
-    },
-    [],
-  );
-
-  // Track the scroll position and the visible height of the scroll container.
-  useLayoutEffect(() => {
-    const el = listRef.current;
-    if (!el) return;
-    const onScroll = () => setScrollTop(el.scrollTop);
-    // A width change can reflow rows, so drop measurements and let the layout
-    // effect below re-measure at the new width.
-    const ro = new ResizeObserver(() => {
-      setViewportH(el.clientHeight);
-      heights.current.clear();
-      bump();
-    });
-    setViewportH(el.clientHeight);
-    el.addEventListener("scroll", onScroll, { passive: true });
-    ro.observe(el);
-    return () => {
-      el.removeEventListener("scroll", onScroll);
-      ro.disconnect();
-    };
-  }, []);
-
-  // After each render, measure the rows currently in the DOM. If a real height
-  // differs from the cache, store it and re-render so offsets settle (converges in
-  // a pass or two; offsetHeight is integral, so it stops changing).
-  useLayoutEffect(() => {
-    let changed = false;
-    for (const [key, el] of nodes.current) {
-      const h = el.offsetHeight;
-      if (h > 0 && heights.current.get(key) !== h) {
-        heights.current.set(key, h);
-        changed = true;
-      }
-    }
-    if (changed) bump();
-  });
-
-  // Recomputed every render (not memoized): heights is a mutable ref, so a measure
-  // pass that calls bump() must recompute offsets with the same `items`.
-  const keys = items.map(keyOf);
-  const { tops, totalH, start, end } = computeWindow(
-    keys,
-    heights.current,
-    scrollTop,
-    viewportH,
-    estimate,
-  );
-
-  const windowItems = items.slice(start, end);
-
-  return (
-    <div
-      ref={(el) => {
-        listRef.current = el;
-        if (scrollRef) scrollRef.current = el;
-      }}
-      className={className}
-    >
-      <div className="mods-virt" style={{ height: totalH }}>
-        {windowItems.map((item, i) => {
-          const index = start + i;
-          const key = keys[index];
-          return (
-            <div
-              key={key}
-              ref={setNode(key)}
-              className="mods-virt-item"
-              style={{ transform: `translateY(${tops[index]}px)` }}
-            >
-              {renderItem(item)}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 // Windowed mod list: a thin wrapper that renders a mod card or an unreadable-jar
 // card per entry, keyed by jar name.
@@ -908,6 +756,7 @@ function VirtualModList({
       keyOf={(e) => e.jar}
       estimate={CARD_ESTIMATE}
       scrollRef={scrollRef}
+      className="mods-list"
       renderItem={(entry) =>
         entry.kind === "mod" ? (
           <ModCard
@@ -1287,8 +1136,13 @@ function MissingDepsPanel({
   return (
     <div className="panel missing-deps">
       <p className="note">
-        {mods.length} missing {mods.length > 1 ? "dependencies" : "dependency"} — install from
-        Modrinth; it re-tests automatically once they're in.
+        {busy && "Installing… "}
+        {remaining} remaining to install.
+      </p>
+      <p className="note">
+        The flagged dependencies can be installed from Modrinth. Click the download icon to install
+        one, or "Install all" to batch the installation. The test will auto re-run after every dep
+        installation attempt, and will confirm the fix.
       </p>
       {remaining > 0 && (
         <button
@@ -1351,7 +1205,7 @@ function VerdictCause({ cause, onResolve }: { cause: RunCause; onResolve: () => 
         </details>
       )}
       {cause.category === "missing_dependency" && cause.mods.length > 0 && (
-        <button type="button" className="btn-ghost resolve-handoff" onClick={onResolve}>
+        <button type="button" className="btn-secondary resolve-handoff" onClick={onResolve}>
           Install in Resolution › Deps →
         </button>
       )}
@@ -1554,36 +1408,48 @@ export function RuntimeView({
   );
 }
 
-// Override groups (resource-pack assets / datapack data shared by ≥2 packs).
-// Same shape as recipe collisions: a colliding set, its paths behind expand.
+// A collapsed override row is ~one summary line tall; opened rows re-measure.
+const OVERRIDE_ESTIMATE = 48;
+
+// One override group: the colliding set of packs and, behind a disclosure, the
+// shared paths. Same shape as a recipe collision.
+function OverrideRow({ c, unit }: { c: Conflict; unit: string }) {
+  const paths = (c.detail.paths as string[] | undefined) ?? [];
+  const count = (c.detail.count as number | undefined) ?? paths.length;
+  return (
+    <details className="conflict-group">
+      <summary className="group-head">
+        <Chevron />
+        <span className="group-name recipe-pair">{c.members.join("  ↔  ")}</span>
+        <span className="group-count">
+          · {count} {unit}
+        </span>
+      </summary>
+      <ul className="recipe-list">
+        {paths.map((p) => (
+          <li className="recipe-id" key={p}>
+            {p}
+          </li>
+        ))}
+        {count > paths.length && <li className="note">…and {count - paths.length} more</li>}
+      </ul>
+    </details>
+  );
+}
+
+// Override groups (resource-pack assets / datapack data shared by ≥2 packs),
+// windowed so a pack with many collisions doesn't flood the DOM.
 function OverrideList({ conflicts, unit }: { conflicts: Conflict[]; unit: string }) {
   if (conflicts.length === 0) return null;
   return (
-    <div className="conflict-groups">
-      {conflicts.map((c) => {
-        const paths = (c.detail.paths as string[] | undefined) ?? [];
-        const count = (c.detail.count as number | undefined) ?? paths.length;
-        return (
-          <details className="conflict-group" key={c.members.join("|")}>
-            <summary className="group-head">
-              <Chevron />
-              <span className="group-name recipe-pair">{c.members.join("  ↔  ")}</span>
-              <span className="group-count">
-                · {count} {unit}
-              </span>
-            </summary>
-            <ul className="recipe-list">
-              {paths.map((p) => (
-                <li className="recipe-id" key={p}>
-                  {p}
-                </li>
-              ))}
-              {count > paths.length && <li className="note">…and {count - paths.length} more</li>}
-            </ul>
-          </details>
-        );
-      })}
-    </div>
+    <VirtualList
+      items={conflicts}
+      keyOf={(c) => c.members.join("|")}
+      estimate={OVERRIDE_ESTIMATE}
+      gap={8}
+      className="conflict-groups"
+      renderItem={(c) => <OverrideRow c={c} unit={unit} />}
+    />
   );
 }
 
@@ -1773,7 +1639,7 @@ function DisableButton({ modsPath, jar }: { modsPath: string; jar: string }) {
   return (
     <button
       type="button"
-      className={`btn-ghost mixin-disable mixin-disable-${state}`}
+      className={`btn-secondary mixin-disable mixin-disable-${state}`}
       onClick={toggle}
       disabled={state === "busy"}
       title={msg ?? (state === "disabled" ? "restore this mod" : "sideline this mod (reversible)")}
@@ -1783,8 +1649,27 @@ function DisableButton({ modsPath, jar }: { modsPath: string; jar: string }) {
   );
 }
 
-// One member of a mixin cluster: its identity, the version-match update (when a
-// compatible build exists) and the reversible disable fallback.
+// The last dotted segment of an intermediary class name, for a compact headline:
+// `net.minecraft.class_310` -> `class_310`. The full name stays in the body.
+function shortClass(name: string): string {
+  const i = name.lastIndexOf(".");
+  return i >= 0 ? name.slice(i + 1) : name;
+}
+
+// A member's identity line — display name (falling back to the id) and its current
+// version. Shared by the actionable and broad-co-patch rows.
+function MixinMemberIdentity({ member }: { member: MixinClusterMember }) {
+  return (
+    <span className="mixin-member-id">
+      {member.mod?.name ?? member.modId}
+      {member.currentVersion && <span className="mixin-member-v">{member.currentVersion}</span>}
+    </span>
+  );
+}
+
+// One member of a mixin cluster: a reversible disable toggle on the left (click to
+// sideline the mod, click again to restore it) and, when a compatible build
+// exists, the version-match update on the right. Shared by both card kinds.
 function MixinMemberRow({
   member,
   modsPath,
@@ -1803,12 +1688,10 @@ function MixinMemberRow({
   const updatableMod = member.mod?.updateAvailable && member.jar ? member.mod : null;
   return (
     <li className="mixin-member">
-      <span className="mixin-member-id">
-        {member.mod?.name ?? member.modId}
-        {member.currentVersion && <span className="mixin-member-v">{member.currentVersion}</span>}
-      </span>
-      <div className="mixin-member-actions">
-        {updatableMod && member.jar && (
+      {member.jar && <DisableButton modsPath={modsPath} jar={member.jar} />}
+      <MixinMemberIdentity member={member} />
+      {updatableMod && member.jar && (
+        <div className="mixin-member-actions">
           <UpdateButton
             mod={updatableMod}
             modsPath={modsPath}
@@ -1816,16 +1699,16 @@ function MixinMemberRow({
             alreadyUpdated={updatedJars.has(member.jar)}
             onUpdated={onUpdated}
           />
-        )}
-        {member.jar && <DisableButton modsPath={modsPath} jar={member.jar} />}
-      </div>
+        </div>
+      )}
     </li>
   );
 }
 
-// One cluster: the co-patching mods, the shared target/methods, and a per-member
-// action list. Version-match is the headline fix; disable is the safe fallback.
-function MixinClusterCard({
+// One actionable cluster (a handful of mods patching the same target): each mod
+// gets a reversible disable and, when offered, a version-match update. Open by
+// default — these are the rows the user is meant to act on.
+function MixinConflictCard({
   cluster,
   modsPath,
   version,
@@ -1842,7 +1725,7 @@ function MixinClusterCard({
   const detail =
     cluster.sharedMethods.length > 0
       ? `same method${cluster.sharedMethods.length > 1 ? "s" : ""}: ${cluster.sharedMethods.join(", ")}`
-      : cluster.targets.join(", ");
+      : cluster.targets.map(shortClass).join(", ");
   return (
     <details className="conflict-group" open>
       <summary className="group-head">
@@ -1854,10 +1737,10 @@ function MixinClusterCard({
       </summary>
       <div className="mixin-cluster-body">
         <p className="note">
-          Both patch the {detail} —{" "}
+          They patch the {detail} —{" "}
           {canUpdate
             ? "update one to a compatible build, or disable one (reversible)."
-            : "no compatible update found; disable one (reversible) to break the conflict."}
+            : "disable one (reversible) to break the conflict."}
         </p>
         <ul className="mixin-members">
           {cluster.members.map((m) => (
@@ -1876,8 +1759,76 @@ function MixinClusterCard({
   );
 }
 
-// The mixin-resolver block: the actionable clusters plus a headless re-test to
-// confirm the fix actually boots — the verify loop the static map can't close.
+// Rows past this are hidden behind a "+N more" toggle so a broad co-patch (a dozen+
+// mods on one class) can't flood the DOM. Only broad cards need it — actionable
+// clusters are capped at MIXIN_PAIRWISE_MAX members upstream.
+const MIXIN_MEMBER_CAP = 6;
+
+// First-paint heights for the windowed cluster lists; real heights replace them.
+const MIXIN_CARD_ESTIMATE = 150; // an open actionable card with a few members
+const MIXIN_BROAD_ESTIMATE = 48; // a collapsed broad co-patch (summary only)
+
+// One broad co-patch (many mods on a popular class): collapsed by default and
+// framed as noise — disabling isn't the fix, a re-test is. Members are capped with
+// a "+N more" reveal. No keep-pick: there's no single winner to choose.
+function MixinBroadCard({
+  cluster,
+  modsPath,
+  version,
+  updatedJars,
+  onUpdated,
+}: {
+  cluster: MixinCluster;
+  modsPath: string;
+  version: string;
+  updatedJars: Set<string>;
+  onUpdated: (jar: string) => void;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const shown = showAll ? cluster.members : cluster.members.slice(0, MIXIN_MEMBER_CAP);
+  const hidden = cluster.members.length - shown.length;
+  const target = cluster.targets[0] ?? "a shared class";
+  return (
+    <details className="conflict-group mixin-broad">
+      <summary className="group-head">
+        <Chevron />
+        <span className="group-name">{shortClass(target)}</span>
+        <span className="group-count">· {cluster.members.length} mods</span>
+        {cluster.confirmedAtRuntime && <span className="tag-confirmed">confirmed at runtime</span>}
+      </summary>
+      <div className="mixin-cluster-body">
+        <p className="note">
+          {cluster.members.length} mods co-patch {target}
+          {cluster.sharedMethods.length > 0 && ` (methods: ${cluster.sharedMethods.join(", ")})`} —
+          usually harmless. Disabling one rarely helps here; re-test to confirm the set boots.
+        </p>
+        <ul className="mixin-members">
+          {shown.map((m) => (
+            <MixinMemberRow
+              key={m.modId}
+              member={m}
+              modsPath={modsPath}
+              version={version}
+              updatedJars={updatedJars}
+              onUpdated={onUpdated}
+            />
+          ))}
+          {hidden > 0 && (
+            <li className="mixin-more">
+              <button type="button" className="note-link" onClick={() => setShowAll(true)}>
+                +{hidden} more
+              </button>
+            </li>
+          )}
+        </ul>
+      </div>
+    </details>
+  );
+}
+
+// The mixin-resolver block: actionable pairwise picks first, the broad co-patches
+// folded into a collapsed bucket below, then a headless re-test to confirm the fix
+// actually boots — the verify loop the static map can't close.
 function MixinResolver({
   clusters,
   modsPath,
@@ -1897,31 +1848,135 @@ function MixinResolver({
   updatedJars: Set<string>;
   onUpdated: (jar: string) => void;
 }) {
+  // Already sorted actionable-first by groupMixinClusters; partition for layout.
+  const actionable = useMemo(() => clusters.filter((c) => !c.broad), [clusters]);
+  const broad = useMemo(() => clusters.filter((c) => c.broad), [clusters]);
+  // One deterministic action per conflict the planner can decide (centrality →
+  // update → library role); conflicts it can't decide are left to the user.
+  const plans = useMemo<MixinAutoFix[]>(
+    () => actionable.map(planMixinAutoFix).filter((p) => p.kind !== "none"),
+    [actionable],
+  );
+  const [fixing, setFixing] = useState(false);
+  // Applied state + summary are keyed to the cluster signature, so a fresh scan
+  // (new signature) auto-clears them — derived, no effect to keep in sync.
+  const [fixState, setFixState] = useState<{
+    sig: string;
+    summary: string;
+  } | null>(null);
+  const sig = actionable.map((c) => c.key).join("|");
+  const applied = fixState?.sig === sig;
+  const summary = applied && fixState ? fixState.summary : null;
+
+  // Apply every planned action in order (serial: one shared mods folder). Disables
+  // are immediate; an update swaps the jar in place and needs a re-scan after, so
+  // the summary says so. Whatever lands is reflected in the count.
+  const autoFix = async () => {
+    setFixing(true);
+    let disabled = 0;
+    let updated = 0;
+    try {
+      for (const p of plans) {
+        if (p.kind === "disable") {
+          for (const jar of p.jars) {
+            try {
+              const r = await disableMod(modsPath, jar);
+              if (r.status === "disabled") disabled++;
+            } catch {
+              // best-effort: keep going, the summary reflects what landed
+            }
+          }
+        } else if (p.kind === "update") {
+          for (const u of p.jars) {
+            try {
+              const r = await updateMod(modsPath, u.jar, version, u.loader);
+              if (r.status === "updated") {
+                updated++;
+                onUpdated(u.jar);
+              }
+            } catch {
+              // best-effort: keep going
+            }
+          }
+        }
+      }
+    } finally {
+      const parts: string[] = [];
+      if (disabled) parts.push(`disabled ${disabled}`);
+      if (updated) parts.push(`updated ${updated}`);
+      setFixState({
+        sig,
+        summary:
+          parts.length > 0
+            ? `Auto-fix: ${parts.join(", ")}`
+            : "Auto-fix: nothing could be applied automatically.",
+      });
+      setFixing(false);
+    }
+  };
+
   if (clusters.length === 0) return null;
+  const cardProps = { modsPath, version, updatedJars, onUpdated };
   return (
     <section className="mixin-resolver">
       <h2 className="resolution-section">Mixin conflicts</h2>
-      <p className="note">
-        {clusters.length} likely mixin conflict{clusters.length > 1 ? "s" : ""} — two mods patch the
-        same target incompatibly. Try a compatible update first, disable as a fallback, then
-        re-test.
-      </p>
-      <div className="conflict-groups">
-        {clusters.map((c) => (
-          <MixinClusterCard
-            key={c.key}
-            cluster={c}
-            modsPath={modsPath}
-            version={version}
-            updatedJars={updatedJars}
-            onUpdated={onUpdated}
+      {actionable.length > 0 ? (
+        <>
+          <p className="note">
+            {actionable.length} likely mixin conflict
+            {actionable.length > 1 ? "s" : ""}. For each conflict, either update one mod to a
+            compatible build (if offered) or enable only one of the conflicting mods (reversible).
+            Then re-test to confirm the fix.
+          </p>
+          <VirtualList
+            items={actionable}
+            keyOf={(c) => c.key}
+            estimate={MIXIN_CARD_ESTIMATE}
+            gap={8}
+            className="conflict-groups"
+            renderItem={(c) => <MixinConflictCard cluster={c} {...cardProps} />}
           />
-        ))}
-      </div>
+        </>
+      ) : (
+        <p className="note">
+          No likely pairwise mixin conflicts — only the broad co-patches below, which are usually
+          harmless.
+        </p>
+      )}
+
+      {broad.length > 0 && (
+        <details className="mixin-broad-section">
+          <summary className="group-head">
+            <Chevron />
+            <span className="group-name">Broad co-patches</span>
+            <span className="group-count">· {broad.length}</span>
+            <span className="group-hint">many mods share a hot class — usually harmless</span>
+          </summary>
+          <VirtualList
+            items={broad}
+            keyOf={(c) => c.key}
+            estimate={MIXIN_BROAD_ESTIMATE}
+            gap={8}
+            className="conflict-groups"
+            renderItem={(c) => <MixinBroadCard cluster={c} {...cardProps} />}
+          />
+        </details>
+      )}
+
       <section className="runner">
-        <button className="btn-primary" type="button" onClick={onTest} disabled={testing}>
-          {testing ? "booting…" : "Re-test (headless boot)"}
+        <button
+          className="btn-secondary no-wrap"
+          type="button"
+          onClick={() => void autoFix()}
+          disabled={fixing || applied || plans.length === 0}
+          title="Apply every conflict the planner can decide — keep the load-bearing or library mod, or update — and leave the rest to you."
+        >
+          {fixing ? "Auto-fixing…" : "Auto-fix"}
         </button>
+        <button className="btn-primary no-wrap" type="button" onClick={onTest} disabled={testing}>
+          {testing ? "Booting…" : "Run the test again"}
+        </button>
+        {summary && <span className="note">{summary}</span>}
         {verdict && !testing && (
           <span className="note">
             last boot:{" "}
@@ -1940,75 +1995,181 @@ function MixinResolver({
 // The modpack's base folder, used to prefill the output path: strip a trailing
 // `mods` segment from the scanned mods folder (the generated config/datapack live
 // at the pack root). Falls back to the mods path when it isn't a `mods` folder.
-function packRoot(modsPath: string): string {
-  return modsPath.replace(/[/\\]mods[/\\]?$/i, "") || modsPath;
-}
-
-// One merged action: write the family's resolution files straight into the given
-// folder (prefilled with the pack root), honouring the winner picks. No preview —
-// generate and place in a single click.
-function ConfigGenerator({
+// Apply sub-tab: write the winning recipes + tags into the instance, reversibly.
+// Target is the user's choice — per-world (no dependency) or global via Open Loader.
+function ApplyResolution({
+  instanceRoot,
   modsPath,
   version,
-  family,
-  generateLabel,
-  winners,
+  loader,
+  recipeWinners,
+  tagWinners,
 }: {
+  instanceRoot: string;
   modsPath: string;
   version?: string;
-  family: ResolutionFamily;
-  generateLabel: string;
-  winners?: ResolutionWinners;
+  loader?: Loader;
+  recipeWinners: Record<string, string>;
+  tagWinners: Record<string, string>;
 }) {
-  const [outDir, setOutDir] = useState(() => packRoot(modsPath));
-  const [exporting, setExporting] = useState(false);
-  // After a successful write the button reads "Done" for a beat, then reverts.
+  const [targets, setTargets] = useState<ResolutionTargets | null>(null);
+  const [target, setTarget] = useState<ApplyTarget>("per_world");
+  const [applying, setApplying] = useState(false);
   const [done, setDone] = useState(false);
+  const [result, setResult] = useState<ApplyResult | null>(null);
+  const [reverting, setReverting] = useState(false);
+  const [installing, setInstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const doneTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => () => window.clearTimeout(doneTimer.current), []);
 
-  const generate = async () => {
-    const dir = outDir.trim();
-    if (!dir) return;
-    setExporting(true);
+  useEffect(() => {
+    let active = true;
+    resolveTargets(instanceRoot, version)
+      .then((t) => active && setTargets(t))
+      .catch(() => active && setTargets(null));
+    return () => {
+      active = false;
+    };
+  }, [instanceRoot, version]);
+
+  const apply = async () => {
+    setApplying(true);
     setError(null);
     try {
-      await resolveExport(modsPath, dir, version, [family], winners);
-      setDone(true);
-      window.clearTimeout(doneTimer.current);
-      doneTimer.current = window.setTimeout(() => setDone(false), 3000);
+      const r = await applyResolution(instanceRoot, version, { recipeWinners, tagWinners }, target);
+      setResult(r);
+      if (r.status === "applied") {
+        setDone(true);
+        window.clearTimeout(doneTimer.current);
+        doneTimer.current = window.setTimeout(() => setDone(false), 3000);
+      } else if (r.status === "error") {
+        setError(r.message ?? "Apply failed.");
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setExporting(false);
+      setApplying(false);
     }
   };
 
+  const revert = async () => {
+    if (!result?.manifest) return;
+    setReverting(true);
+    setError(null);
+    try {
+      const r = await revertResolution(result.manifest);
+      if (r.status === "reverted") setResult(null);
+      else setError(r.message ?? "Revert failed.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReverting(false);
+    }
+  };
+
+  // Install Open Loader from Modrinth so the global target becomes available
+  // without leaving the app, then re-check the pack's capabilities.
+  const installOpenLoader = async () => {
+    setInstalling(true);
+    setError(null);
+    try {
+      const r = await installMod(modsPath, "openloader", version, loader);
+      if (r.status === "installed") {
+        setTargets(await resolveTargets(instanceRoot, version));
+      } else {
+        setError(r.message ?? "Could not install Open Loader.");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const au = targets?.almostUnified ?? false;
+  const openLoader = targets?.openLoader ?? false;
+  const globalUnavailable = target === "openloader" && !openLoader;
+
   return (
-    <>
+    <div className="view">
+      <p className="note">
+        Writes the winning recipes and tags into the pack, reversibly. Tags use{" "}
+        {au ? "Almost Unified (unify.json)" : "a re-tag datapack"}.
+      </p>
+
+      <div className="filters">
+        <button
+          type="button"
+          aria-pressed={target === "per_world"}
+          className={target === "per_world" ? "chip chip-on" : "chip"}
+          onClick={() => setTarget("per_world")}
+        >
+          Per-world
+        </button>
+        <button
+          type="button"
+          aria-pressed={target === "openloader"}
+          className={target === "openloader" ? "chip chip-on" : "chip"}
+          onClick={() => setTarget("openloader")}
+        >
+          Global (Need Open Loader)
+        </button>
+      </div>
+
+      <p className="note">
+        {target === "per_world"
+          ? "Copied into each datapacks/ folder (and a global datapacks/ if present). Existing worlds only, not future ones."
+          : openLoader
+            ? "Written under openloader/data/ so it loads globally like a mod, including future worlds."
+            : "Global loading needs the Open Loader mod, which this pack doesn't have. Install it, or use per-world."}
+      </p>
+
+      {globalUnavailable && (
+        <section className="runner">
+          <button
+            className="btn-primary"
+            type="button"
+            onClick={() => void installOpenLoader()}
+            disabled={installing}
+          >
+            {installing ? "Installing…" : "Install Open Loader"}
+          </button>
+        </section>
+      )}
+
       <section className="runner">
-        <input
-          className="path-input"
-          type="text"
-          placeholder="output folder (your pack root)"
-          value={outDir}
-          onChange={(e) => setOutDir(e.target.value)}
-          spellCheck={false}
-        />
         <button
           className="btn-primary"
           type="button"
-          onClick={() => void generate()}
-          disabled={exporting || done || !outDir.trim()}
+          onClick={() => void apply()}
+          disabled={applying || done || globalUnavailable}
         >
-          {exporting ? "Generating…" : done ? "Done" : generateLabel}
+          {applying ? "Applying…" : done ? "Done" : "Apply to pack"}
         </button>
+        {result?.manifest && (
+          <button
+            className="btn-secondary"
+            type="button"
+            onClick={() => void revert()}
+            disabled={reverting}
+          >
+            {reverting ? "Reverting…" : "Revert"}
+          </button>
+        )}
       </section>
 
+      {result?.status === "nothing" && (
+        <p className="note">Nothing to apply — no resolvable recipe/tag conflicts.</p>
+      )}
+      {result?.status === "applied" && (
+        <p className="note">
+          Wrote {result.written.length} file(s) into {result.targets.length} location(s).
+        </p>
+      )}
       {error && <p className="scan-error">{error}</p>}
-    </>
+    </div>
   );
 }
 
@@ -2247,33 +2408,21 @@ function RecipesResolution({
       <h2 className="resolution-section">Choose the correct recipe</h2>
 
       {error && <p className="scan-error">{error}</p>}
-      {variants === null && !error && <p className="note">reading recipes…</p>}
+      {variants === null && !error && <p className="note">Reading recipes…</p>}
       {selections.length > 0 && (
         <SelectionCards conflicts={selections} winners={winners} onPick={onPick} />
       )}
-      <ConfigGenerator
-        modsPath={modsPath}
-        version={version}
-        family="recipes"
-        generateLabel="Generate recipe datapack"
-        winners={{ recipeWinners: winners }}
-      />
     </>
   );
 }
 
-// Tags sub-tab: a selection card per conventional-tag overlap (each mod's items),
-// then the per-tag Almost Unified config.
+// Tags sub-tab: a selection card per conventional-tag overlap (each mod's items).
 function TagsResolution({
   conflicts,
-  modsPath,
-  version,
   winners,
   onPick,
 }: {
   conflicts: Conflict[];
-  modsPath: string;
-  version?: string;
   winners: Record<string, string>;
   onPick: (id: string, mod: string) => void;
 }) {
@@ -2288,15 +2437,7 @@ function TagsResolution({
   return (
     <>
       <h2 className="resolution-section">Choose the correct tag</h2>
-
       <SelectionCards conflicts={selections} winners={winners} onPick={onPick} />
-      <ConfigGenerator
-        modsPath={modsPath}
-        version={version}
-        family="tags"
-        generateLabel="Generate unify.json"
-        winners={{ tagWinners: winners }}
-      />
     </>
   );
 }
@@ -2310,6 +2451,7 @@ function DepsResolution({
   loader,
   onTest,
   testing,
+  onShowRuntime,
 }: {
   verdict: RunVerdict | null;
   modsPath: string;
@@ -2317,6 +2459,7 @@ function DepsResolution({
   loader?: Loader;
   onTest: () => void;
   testing: boolean;
+  onShowRuntime: () => void;
 }) {
   const cause = verdict?.cause;
   const missing = cause?.category === "missing_dependency" ? cause.mods : [];
@@ -2333,15 +2476,29 @@ function DepsResolution({
       />
     );
   }
+  // A boot that ran and flagged nothing is not the same as one that never ran —
+  // the old single message read as "no test yet" even after a clean pass. Split
+  // the three states: never booted, booted clean, booted with a non-dep cause.
+  const message: ReactNode = !verdict ? (
+    "No missing-dependency verdict yet. A headless boot test detects which dependencies the set is missing; they can then be installed here."
+  ) : verdict.status === "ok" ? (
+    "The last test ran clean, no missing dependencies to install."
+  ) : (
+    <>
+      The last test flagged no missing dependency. If the set still crashed, its cause is shown
+      under{" "}
+      <button type="button" className="note-link" onClick={onShowRuntime}>
+        Runtime
+      </button>
+      .
+    </>
+  );
   return (
     <>
-      <p className="note">
-        No missing-dependency verdict yet. A headless boot detects which dependencies the set is
-        missing; they can then be installed here.
-      </p>
+      <p className="note">{message}</p>
       <section className="runner">
         <button className="btn-primary" type="button" onClick={onTest} disabled={testing}>
-          {testing ? "booting…" : "Run headless boot"}
+          {testing ? "Booting…" : verdict ? "Re-run the test" : "Run the test"}
         </button>
       </section>
     </>
@@ -2352,6 +2509,7 @@ const RESOLUTION_SUBS: { id: ResolutionSub; label: string }[] = [
   { id: "mixins", label: "Mixins" },
   { id: "recipes", label: "Recipes" },
   { id: "tags", label: "Tags" },
+  { id: "apply", label: "Apply" },
   { id: "deps", label: "Deps" },
 ];
 
@@ -2360,6 +2518,7 @@ const RESOLUTION_SUBS: { id: ResolutionSub; label: string }[] = [
 // confirmation, the missing-dependency list) when a boot has run.
 export function ResolutionView({
   modsPath,
+  instanceRoot,
   version,
   conflicts,
   mods,
@@ -2371,8 +2530,10 @@ export function ResolutionView({
   loader,
   sub,
   setSub,
+  onShowRuntime,
 }: {
   modsPath: string;
+  instanceRoot: string;
   version?: string;
   conflicts: Conflict[];
   mods: Mod[];
@@ -2384,6 +2545,7 @@ export function ResolutionView({
   loader?: Loader;
   sub: ResolutionSub;
   setSub: (sub: ResolutionSub) => void;
+  onShowRuntime: () => void;
 }) {
   const mixinExports = useMemo(() => (verdict ? new Set(verdict.mixinExports) : null), [verdict]);
   const clusters = useMemo(
@@ -2449,12 +2611,17 @@ export function ResolutionView({
       )}
 
       {sub === "tags" && (
-        <TagsResolution
-          conflicts={conflicts}
+        <TagsResolution conflicts={conflicts} winners={tagWinners} onPick={pickTag} />
+      )}
+
+      {sub === "apply" && (
+        <ApplyResolution
+          instanceRoot={instanceRoot}
           modsPath={modsPath}
           version={version}
-          winners={tagWinners}
-          onPick={pickTag}
+          loader={loader}
+          recipeWinners={recipeWinners}
+          tagWinners={tagWinners}
         />
       )}
 
@@ -2466,6 +2633,7 @@ export function ResolutionView({
           loader={loader}
           onTest={onTest}
           testing={testing}
+          onShowRuntime={onShowRuntime}
         />
       )}
     </div>

@@ -375,6 +375,7 @@ export function CoreTabPanel({
   resolutionSub,
   setResolutionSub,
   onResolveDeps,
+  onShowRuntime,
 }: {
   tab: Tab;
   result: ScanResult;
@@ -391,6 +392,7 @@ export function CoreTabPanel({
   resolutionSub: ResolutionSub;
   setResolutionSub: (sub: ResolutionSub) => void;
   onResolveDeps: () => void;
+  onShowRuntime: () => void;
 }) {
   return (
     <>
@@ -413,6 +415,7 @@ export function CoreTabPanel({
       {tab === "resolution" && (
         <ResolutionView
           modsPath={result.modsPath}
+          instanceRoot={instance?.root ?? result.modsPath}
           version={version ?? result.profile}
           conflicts={result.conflicts}
           mods={result.mods}
@@ -424,6 +427,7 @@ export function CoreTabPanel({
           loader={instance?.loader}
           sub={resolutionSub}
           setSub={setResolutionSub}
+          onShowRuntime={onShowRuntime}
         />
       )}
     </>

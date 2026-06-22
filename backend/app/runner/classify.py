@@ -25,12 +25,12 @@ _SIGNATURES: list[tuple[CrashCategory, re.Pattern[str], str]] = [
     (
         "mixin_apply",
         re.compile(r"Mixin apply for mod ([\w.-]+) failed", re.IGNORECASE),
-        "A mixin failed to apply — two mods likely patch the same target incompatibly.",
+        "A mixin failed to apply, two mods likely patch the same target incompatibly.",
     ),
     (
         "mixin_apply",
         re.compile(r"(?:InvalidMixinException|MixinApplyError|MixinTransformerError)"),
-        "A mixin failed to apply — two mods likely patch the same target incompatibly.",
+        "A mixin failed to apply, two mods likely patch the same target incompatibly.",
     ),
     (
         "missing_dependency",
