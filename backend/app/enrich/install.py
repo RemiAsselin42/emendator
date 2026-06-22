@@ -6,14 +6,17 @@ a dependency the runner flagged as *missing* — by its loader-declared mod id �
 and adds it to the folder. Both verify the sha1 and write to a temp ``.part``
 first, so network/IO failures leave the mods folder untouched.
 
-:func:`disable_mod` / :func:`enable_mod` move a jar between the active set and a
-``disabled/`` sidecar folder — the no-download, fully reversible way to resolve an
-incompatible mixin pair when no compatible update exists (never a delete).
+:func:`disable_mod` / :func:`enable_mod` toggle a jar's ``.disabled`` suffix in
+place (``foo.jar`` <-> ``foo.jar.disabled``) — the no-download, fully reversible
+way to resolve an incompatible mixin pair when no compatible update exists (never a
+delete, and no second copy). :func:`install_mod` notices a dependency that is only
+disabled and re-enables it instead of downloading.
 """
 
 import hashlib
 import os
 import tempfile
+import zipfile
 from pathlib import Path
 
 import httpx
@@ -24,10 +27,11 @@ from app.models import DisableResult, InstallResult, Loader, UpdateResult
 _UA = "emendator/0.1 (modpack analyzer)"
 _TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 _MAX_BYTES = 300 * 1024 * 1024  # guard against a runaway download
-# Sidecar folder for disabled jars: a sibling of the active jars, not globbed by
-# the scanner/runner (both use a non-recursive ``*.jar`` glob), so a disabled mod
-# is excluded from scans and boots while staying one move away from restoration.
-_DISABLED_DIRNAME = "disabled"
+# A disabled jar keeps its place and gains a ``.disabled`` suffix (``foo.jar`` ->
+# ``foo.jar.disabled``). The scanner/runner glob ``*.jar`` non-recursively, so the
+# renamed file drops out of scans and boots while staying one rename away from
+# restoration — and is never duplicated into a sidecar folder.
+_DISABLED_SUFFIX = ".disabled"
 
 
 def update_mod(mods_dir: Path, jar: str, loader: Loader, game_version: str) -> UpdateResult:
@@ -77,6 +81,24 @@ def install_mod(mods_dir: Path, mod_id: str, loader: Loader, game_version: str) 
     Modrinth matches (or the id is a platform pseudo-dependency), and is a no-op
     on the folder for any failure.
     """
+    # A dependency that's only disabled (renamed ``.jar.disabled``) is restored by
+    # dropping the suffix — no download, the exact jar/version the pack already had.
+    disabled = _find_disabled_jar(mods_dir, mod_id)
+    if disabled is not None:
+        active = disabled.with_suffix("")  # strip ".disabled" -> "<name>.jar"
+        try:
+            disabled.replace(active)
+        except OSError as exc:
+            return InstallResult(
+                status="error", mod_id=mod_id, message=f"Could not re-enable: {exc}"
+            )
+        return InstallResult(
+            status="installed",
+            mod_id=mod_id,
+            jar=active.name,
+            message="Re-enabled a disabled mod (no download).",
+        )
+
     info = modrinth.find_install(mod_id, loader, game_version)
     if info is None:
         return InstallResult(
@@ -115,22 +137,20 @@ def install_mod(mods_dir: Path, mod_id: str, loader: Loader, game_version: str) 
 
 
 def disable_mod(mods_dir: Path, jar: str) -> DisableResult:
-    """Sideline ``jar`` into ``mods_dir/disabled/`` (reversible; no download)."""
+    """Disable ``jar`` in place by appending ``.disabled`` (reversible; no download)."""
     src = mods_dir / jar
     if not src.is_file():
         return DisableResult(status="not_found", jar=jar, message=f"Jar not found: {jar}")
-    disabled_dir = mods_dir / _DISABLED_DIRNAME
     try:
-        disabled_dir.mkdir(exist_ok=True)
-        src.replace(disabled_dir / jar)
+        src.replace(mods_dir / (jar + _DISABLED_SUFFIX))
     except OSError as exc:
         return DisableResult(status="error", jar=jar, message=f"Could not disable: {exc}")
     return DisableResult(status="disabled", jar=jar)
 
 
 def enable_mod(mods_dir: Path, jar: str) -> DisableResult:
-    """Restore ``jar`` from ``mods_dir/disabled/`` back into the active set."""
-    src = mods_dir / _DISABLED_DIRNAME / jar
+    """Re-enable ``jar`` by stripping its ``.disabled`` suffix, back into the set."""
+    src = mods_dir / (jar + _DISABLED_SUFFIX)
     if not src.is_file():
         return DisableResult(status="not_found", jar=jar, message=f"Disabled jar not found: {jar}")
     try:
@@ -138,6 +158,26 @@ def enable_mod(mods_dir: Path, jar: str) -> DisableResult:
     except OSError as exc:
         return DisableResult(status="error", jar=jar, message=f"Could not enable: {exc}")
     return DisableResult(status="enabled", jar=jar)
+
+
+def _find_disabled_jar(mods_dir: Path, mod_id: str) -> Path | None:
+    """A ``*.jar.disabled`` file whose declared mod id (or ``provides``) is ``mod_id``.
+
+    Lets :func:`install_mod` re-enable a merely-disabled dependency instead of
+    re-downloading it. The metadata parser is imported lazily to keep the enrich
+    layer free of an analyzer import at module load.
+    """
+    from app.analyzer.metadata import parse_mod_metadata
+
+    for path in sorted(mods_dir.glob(f"*.jar{_DISABLED_SUFFIX}")):
+        try:
+            with zipfile.ZipFile(path) as zf:
+                mod, _ = parse_mod_metadata(zf, zf.namelist(), path.name)
+        except (zipfile.BadZipFile, OSError):
+            continue
+        if mod is not None and (mod.id == mod_id or mod_id in mod.provides):
+            return path
+    return None
 
 
 def _download(url: str, dest_dir: Path) -> Path | None:

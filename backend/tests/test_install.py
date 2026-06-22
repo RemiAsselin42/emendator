@@ -1,8 +1,10 @@
 """In-place mod update: download newest Modrinth version, verify, swap."""
 
 import hashlib
+import json
 import os
 import tempfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -245,12 +247,14 @@ def test_find_install_skips_platform_pseudo_deps(monkeypatch: pytest.MonkeyPatch
 # --- disable_mod / enable_mod: reversible sideline, no download ----------------
 
 
-def test_disable_sidelines_jar(tmp_path: Path) -> None:
+def test_disable_suffixes_jar_in_place(tmp_path: Path) -> None:
     _old_jar(tmp_path, "spell_engine-1.0.jar")
     result = install.disable_mod(tmp_path, "spell_engine-1.0.jar")
     assert result.status == "disabled"
     assert not (tmp_path / "spell_engine-1.0.jar").exists()  # out of the active set
-    assert (tmp_path / "disabled" / "spell_engine-1.0.jar").read_bytes() == b"OLD"  # preserved
+    # renamed in place (no sidecar folder), content preserved
+    assert (tmp_path / "spell_engine-1.0.jar.disabled").read_bytes() == b"OLD"
+    assert not (tmp_path / "disabled").exists()
 
 
 def test_disable_not_found(tmp_path: Path) -> None:
@@ -259,16 +263,40 @@ def test_disable_not_found(tmp_path: Path) -> None:
     assert result.status == "not_found"
 
 
-def test_enable_restores_jar(tmp_path: Path) -> None:
+def test_enable_strips_suffix(tmp_path: Path) -> None:
     _old_jar(tmp_path, "spell_engine-1.0.jar")
     install.disable_mod(tmp_path, "spell_engine-1.0.jar")
     result = install.enable_mod(tmp_path, "spell_engine-1.0.jar")
     assert result.status == "enabled"
     assert (tmp_path / "spell_engine-1.0.jar").read_bytes() == b"OLD"  # back in the set
-    assert not (tmp_path / "disabled" / "spell_engine-1.0.jar").exists()
+    assert not (tmp_path / "spell_engine-1.0.jar.disabled").exists()
 
 
 def test_enable_not_found_when_not_disabled(tmp_path: Path) -> None:
     tmp_path.mkdir(exist_ok=True)
     result = install.enable_mod(tmp_path, "spell_engine-1.0.jar")
     assert result.status == "not_found"
+
+
+def _fabric_jar(folder: Path, name: str, mod_id: str) -> Path:
+    """A minimal, parsable Fabric jar declaring ``mod_id``."""
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / name
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("fabric.mod.json", json.dumps({"id": mod_id, "version": "1.0"}))
+    return path
+
+
+def test_install_reenables_disabled_dependency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The dependency is present, only disabled — install must re-enable it, not download.
+    _fabric_jar(tmp_path, "spell_engine-1.0.jar.disabled", "spell_engine")
+    monkeypatch.setattr(
+        modrinth, "find_install", lambda *a, **k: pytest.fail("must not download a disabled mod")
+    )
+    result = install.install_mod(tmp_path, "spell_engine", "fabric", "1.21.1")
+    assert result.status == "installed"
+    assert result.jar == "spell_engine-1.0.jar"
+    assert (tmp_path / "spell_engine-1.0.jar").exists()
+    assert not (tmp_path / "spell_engine-1.0.jar.disabled").exists()
