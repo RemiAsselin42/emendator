@@ -35,7 +35,9 @@ def test_curseforge_offline_enrichment(tmp_path: Path) -> None:
     mods = [Mod(id="jei", jar="jei.jar")]
     curseforge.enrich_offline(tmp_path, mods)
     assert mods[0].provider == "curseforge"
-    assert mods[0].homepage.endswith("/jei")
+    homepage = mods[0].homepage
+    assert homepage is not None
+    assert homepage.endswith("/jei")
     assert mods[0].name == "Just Enough Items"  # filled from manifest
 
 
@@ -56,7 +58,9 @@ def test_modrinth_enrichment_flags_update(tmp_path: Path, monkeypatch: pytest.Mo
     modrinth.enrich([jar], mods, "1.21.1", "fabric")
 
     assert mods[0].provider == "modrinth"
-    assert "AANobbMI" in mods[0].homepage
+    homepage = mods[0].homepage
+    assert homepage is not None
+    assert "AANobbMI" in homepage
     assert mods[0].latest_version == "0.6.0"
     assert mods[0].update_available is True
 
