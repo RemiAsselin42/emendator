@@ -28,9 +28,11 @@ export default function App() {
     onTest,
     onBisect,
     versionOptions,
-    recipeCount,
     conflictCount,
     contentTabs,
+    resolutionSub,
+    setResolutionSub,
+    resolveMissingDeps,
   } = session;
 
   return (
@@ -54,7 +56,6 @@ export default function App() {
             tab={tab}
             setTab={setTab}
             conflictCount={conflictCount}
-            recipeCount={recipeCount}
             contentTabs={contentTabs}
           />
         )}
@@ -89,6 +90,9 @@ export default function App() {
                 onUpdated={markUpdated}
                 onTest={onTest}
                 onBisect={onBisect}
+                resolutionSub={resolutionSub}
+                setResolutionSub={setResolutionSub}
+                onResolveDeps={resolveMissingDeps}
               />
               <ContentTabPanel tab={tab} report={report} />
             </div>

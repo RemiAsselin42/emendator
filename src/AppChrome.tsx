@@ -6,14 +6,13 @@ import type {
   ScanResult,
   VersionDetection,
 } from "./lib/api";
-import type { ContentTab, Tab, VersionOption } from "./useScanSession";
+import type { ContentTab, ResolutionSub, Tab, VersionOption } from "./useScanSession";
 import { TABS } from "./useScanSession";
 import {
   ConflictsView,
   DatapacksView,
   ItemsView,
   Overview,
-  RecipesView,
   ResolutionView,
   ResourcePacksView,
   RuntimeView,
@@ -288,13 +287,11 @@ export function Sidebar({
   tab,
   setTab,
   conflictCount,
-  recipeCount,
   contentTabs,
 }: {
   tab: Tab;
   setTab: (tab: Tab) => void;
   conflictCount: number;
-  recipeCount: number;
   contentTabs: ContentTab[];
 }) {
   return (
@@ -308,7 +305,6 @@ export function Sidebar({
         >
           {t.label}
           {t.id === "conflicts" && ` (${conflictCount})`}
-          {t.id === "recipes" && ` (${recipeCount})`}
         </button>
       ))}
       {contentTabs.map((t) => (
@@ -329,24 +325,22 @@ export function Sidebar({
 // from the scan result, so CoreTabPanel stays a flat tab switch.
 function RuntimeTab({
   result,
-  instance,
-  version,
   verdict,
   testing,
   bisecting,
   bisectResult,
   onTest,
   onBisect,
+  onResolve,
 }: {
   result: ScanResult;
-  instance: Instance | null;
-  version: string | null;
   verdict: RunVerdict | null;
   testing: boolean;
   bisecting: boolean;
   bisectResult: BisectResult | null;
   onTest: () => void;
   onBisect: () => void;
+  onResolve: () => void;
 }) {
   return (
     <RuntimeView
@@ -358,9 +352,7 @@ function RuntimeTab({
       bisectResult={bisectResult}
       runnerSupported={result.detection?.runnerSupported ?? true}
       block={result.detection?.block ?? null}
-      modsPath={result.modsPath}
-      version={version ?? result.profile}
-      loader={instance?.loader}
+      onResolve={onResolve}
     />
   );
 }
@@ -380,6 +372,9 @@ export function CoreTabPanel({
   onUpdated,
   onTest,
   onBisect,
+  resolutionSub,
+  setResolutionSub,
+  onResolveDeps,
 }: {
   tab: Tab;
   result: ScanResult;
@@ -393,6 +388,9 @@ export function CoreTabPanel({
   onUpdated: (jar: string) => void;
   onTest: () => void;
   onBisect: () => void;
+  resolutionSub: ResolutionSub;
+  setResolutionSub: (sub: ResolutionSub) => void;
+  onResolveDeps: () => void;
 }) {
   return (
     <>
@@ -400,18 +398,16 @@ export function CoreTabPanel({
         <Overview result={result} updatedJars={updatedJars} onUpdated={onUpdated} />
       )}
       {tab === "conflicts" && <ConflictsView conflicts={result.conflicts} verdict={verdict} />}
-      {tab === "recipes" && <RecipesView conflicts={result.conflicts} />}
       {tab === "runtime" && (
         <RuntimeTab
           result={result}
-          instance={instance}
-          version={version}
           verdict={verdict}
           testing={testing}
           bisecting={bisecting}
           bisectResult={bisectResult}
           onTest={onTest}
           onBisect={onBisect}
+          onResolve={onResolveDeps}
         />
       )}
       {tab === "resolution" && (
@@ -425,6 +421,9 @@ export function CoreTabPanel({
           onTest={onTest}
           updatedJars={updatedJars}
           onUpdated={onUpdated}
+          loader={instance?.loader}
+          sub={resolutionSub}
+          setSub={setResolutionSub}
         />
       )}
     </>

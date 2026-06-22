@@ -233,6 +233,11 @@ class GeneratedFile(CamelModel):
     content: str
 
 
+# Which conflict families the no-code generator covers. The front drives them
+# per resolution sub-tab (Tags / Recipes); omitting the list means "all".
+ResolutionFamily = Literal["tags", "recipes"]
+
+
 class ResolutionPlan(CamelModel):
     """The set of config/datapack files that resolve the resolvable conflicts."""
 
@@ -249,6 +254,9 @@ class ResolveRequest(CamelModel):
     path: str
     version: str | None = None
     mod_priorities: list[str] | None = None
+    # Restrict generation to these families (None = all). Lets the Tags and
+    # Recipes sub-tabs each preview only their own artifact.
+    families: list[ResolutionFamily] | None = None
 
 
 class ExportRequest(CamelModel):
@@ -258,6 +266,7 @@ class ExportRequest(CamelModel):
     out_dir: str
     version: str | None = None
     mod_priorities: list[str] | None = None
+    families: list[ResolutionFamily] | None = None
 
 
 class ExportResult(CamelModel):

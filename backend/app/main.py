@@ -260,7 +260,7 @@ def resolve_preview(req: ResolveRequest) -> ResolutionPlan:
     folder = _require_dir(req.path)
     profile, _ = _resolve_for(folder, req.version)
     scan = scan_mods_folder(folder, profile.profile)
-    return build_resolution_plan(profile, scan.conflicts, req.mod_priorities)
+    return build_resolution_plan(profile, scan.conflicts, req.mod_priorities, req.families)
 
 
 @app.post("/resolve/export", response_model=ExportResult)
@@ -269,7 +269,7 @@ def resolve_export(req: ExportRequest) -> ExportResult:
     folder = _require_dir(req.path)
     profile, _ = _resolve_for(folder, req.version)
     scan = scan_mods_folder(folder, profile.profile)
-    plan = build_resolution_plan(profile, scan.conflicts, req.mod_priorities)
+    plan = build_resolution_plan(profile, scan.conflicts, req.mod_priorities, req.families)
     out_dir = Path(req.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     return ExportResult(out_dir=str(out_dir), written=export_plan(plan, out_dir))

@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from app.models import Conflict
 from app.profile import get_profile
 from app.resolve.generate import (
@@ -61,6 +63,23 @@ def test_build_plan_default_priorities_and_summary() -> None:
     assert UNIFY_PATH in paths
     assert "emendator-overrides/pack.mcmeta" in paths
     assert "tag overlap" in plan.summary
+
+
+@pytest.mark.parametrize(
+    ("families", "want_unify", "want_datapack"),
+    [(["tags"], True, False), (["recipes"], False, True)],
+)
+def test_build_plan_families_filter(
+    families: list[str], want_unify: bool, want_datapack: bool
+) -> None:
+    conflicts = [
+        _tag_overlap("c:ingots/tin", ["a", "b"]),
+        _recipe_collision("minecraft:torch", ["a", "b"]),
+    ]
+    plan = build_resolution_plan(PROFILE, conflicts, families=families)  # type: ignore[arg-type]
+    paths = {f.path for f in plan.files}
+    assert (UNIFY_PATH in paths) is want_unify
+    assert any(p.startswith("emendator-overrides/") for p in paths) is want_datapack
 
 
 def test_build_plan_empty_when_no_resolvable_conflicts() -> None:

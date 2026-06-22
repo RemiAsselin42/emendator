@@ -18,6 +18,7 @@ import type {
   Mod,
   ModEnvironment,
   RegistryIndex,
+  ResolutionFamily,
   ResolutionPlan,
   ResourcePack,
   RunCause,
@@ -57,6 +58,7 @@ import {
   resolutionNote,
   SEVERITY_ORDER,
 } from "./lib/conflicts";
+import type { ResolutionSub } from "./useScanSession";
 
 interface TestProps {
   onTest: () => void;
@@ -302,10 +304,11 @@ export function ConflictsView({
   );
 }
 
-// Recipe collisions get their own tab: same recipe id written by ≥2 mods, so the
-// loader keeps one and silently drops the rest (detectors.py). Aggregated by the
-// colliding mod set — the unit users act on — with the recipe ids behind expand.
-export function RecipesView({ conflicts }: { conflicts: Conflict[] }) {
+// Recipe-collision browse, shown in the Resolution › Recipes sub-tab: same recipe
+// id written by ≥2 mods, so the loader keeps one and silently drops the rest
+// (detectors.py). Aggregated by the colliding mod set — the unit users act on —
+// with the recipe ids behind expand.
+function RecipesView({ conflicts }: { conflicts: Conflict[] }) {
   const groups = useMemo(() => groupRecipeCollisions(conflicts), [conflicts]);
   const total = groups.reduce((n, g) => n + g.recipes.length, 0);
 
@@ -1337,23 +1340,9 @@ function RunnerUnsupported({ block }: { block: string | null }) {
 }
 
 // The suspected cause of a verdict: summary, the mods that may be involved, an
-// optional log excerpt, and — when the cause is a missing dependency — the
-// installer. `durationMs` only keys the installer so it remounts per verdict.
-function VerdictCause({
-  cause,
-  durationMs,
-  modsPath,
-  version,
-  loader,
-  onTest,
-  testing,
-}: {
-  cause: RunCause;
-  durationMs: number;
-  modsPath: string;
-  version: string;
-  loader?: Loader;
-} & TestProps) {
+// optional log excerpt, and — when the cause is a missing dependency — a handoff
+// to the Resolution › Deps installer (the installer itself now lives there).
+function VerdictCause({ cause, onResolve }: { cause: RunCause; onResolve: () => void }) {
   return (
     <>
       <p className="note">
@@ -1373,35 +1362,17 @@ function VerdictCause({
         </details>
       )}
       {cause.category === "missing_dependency" && cause.mods.length > 0 && (
-        <MissingDepsPanel
-          key={`${durationMs}:${cause.mods.join(",")}`}
-          mods={cause.mods}
-          modsPath={modsPath}
-          version={version}
-          loader={loader}
-          onRetest={onTest}
-          testing={testing}
-        />
+        <button type="button" className="btn-ghost resolve-handoff" onClick={onResolve}>
+          Install in Resolution › Deps →
+        </button>
       )}
     </>
   );
 }
 
-// The verdict readout: status line, the suspected cause (with the missing-deps
-// installer when that's the category), and the log tail.
-function VerdictPanel({
-  verdict,
-  modsPath,
-  version,
-  loader,
-  onTest,
-  testing,
-}: {
-  verdict: RunVerdict;
-  modsPath: string;
-  version: string;
-  loader?: Loader;
-} & TestProps) {
+// The verdict readout: status line, the suspected cause (with the Deps handoff
+// when that's the category), and the log tail.
+function VerdictPanel({ verdict, onResolve }: { verdict: RunVerdict; onResolve: () => void }) {
   return (
     <div className="panel">
       <p>
@@ -1411,17 +1382,7 @@ function VerdictPanel({
         {verdict.mixinExports.length > 0 &&
           ` · ${verdict.mixinExports.length} mixin-transformed classes (ground truth)`}
       </p>
-      {verdict.cause && (
-        <VerdictCause
-          cause={verdict.cause}
-          durationMs={verdict.durationMs}
-          modsPath={modsPath}
-          version={version}
-          loader={loader}
-          onTest={onTest}
-          testing={testing}
-        />
-      )}
+      {verdict.cause && <VerdictCause cause={verdict.cause} onResolve={onResolve} />}
       {verdict.logTail && verdict.status !== "error" && (
         <details className="log-tail">
           <summary>Log tail</summary>
@@ -1432,24 +1393,20 @@ function VerdictPanel({
   );
 }
 
-// "Test" sub-tab: boot the whole set headlessly and read the verdict (plus the
-// missing-dependency installer when that's the cause).
+// "Test" sub-tab: boot the whole set headlessly and read the verdict; a missing
+// dependency hands off to Resolution › Deps for the install.
 function TestView({
   verdict,
   onTest,
   testing,
   runnerSupported,
   block,
-  modsPath,
-  version,
-  loader,
+  onResolve,
 }: {
   verdict: RunVerdict | null;
   runnerSupported: boolean;
   block: string | null;
-  modsPath: string;
-  version: string;
-  loader?: Loader;
+  onResolve: () => void;
 } & TestProps) {
   return (
     <div className="view">
@@ -1460,14 +1417,7 @@ function TestView({
       </section>
 
       {verdict ? (
-        <VerdictPanel
-          verdict={verdict}
-          modsPath={modsPath}
-          version={version}
-          loader={loader}
-          onTest={onTest}
-          testing={testing}
-        />
+        <VerdictPanel verdict={verdict} onResolve={onResolve} />
       ) : (
         <p className="note">No boot yet. Run a test to get a runtime verdict.</p>
       )}
@@ -1559,9 +1509,7 @@ export function RuntimeView({
   bisectResult,
   runnerSupported,
   block,
-  modsPath,
-  version,
-  loader,
+  onResolve,
 }: {
   verdict: RunVerdict | null;
   onBisect: () => void;
@@ -1569,9 +1517,7 @@ export function RuntimeView({
   bisectResult: BisectResult | null;
   runnerSupported: boolean;
   block: string | null;
-  modsPath: string;
-  version: string;
-  loader?: Loader;
+  onResolve: () => void;
 } & TestProps) {
   const [sub, setSub] = useState<RuntimeSub>("test");
   return (
@@ -1604,9 +1550,7 @@ export function RuntimeView({
           testing={testing}
           runnerSupported={runnerSupported}
           block={block}
-          modsPath={modsPath}
-          version={version}
-          loader={loader}
+          onResolve={onResolve}
         />
       ) : (
         <BisectView
@@ -2001,32 +1945,20 @@ function MixinResolver({
   );
 }
 
-export function ResolutionView({
+// Shared generate → preview → export flow for one conflict family (Tags emits
+// unify.json; Recipes emits the override datapack). Parametrised so both sub-tabs
+// drive the same /resolve endpoints with a `families` filter.
+function ConfigGenerator({
   modsPath,
   version,
-  conflicts,
-  mods,
-  verdict,
-  testing,
-  onTest,
-  updatedJars,
-  onUpdated,
+  family,
+  generateLabel,
 }: {
   modsPath: string;
   version?: string;
-  conflicts: Conflict[];
-  mods: Mod[];
-  verdict: RunVerdict | null;
-  testing: boolean;
-  onTest: () => void;
-  updatedJars: Set<string>;
-  onUpdated: (jar: string) => void;
+  family: ResolutionFamily;
+  generateLabel: string;
 }) {
-  const mixinExports = useMemo(() => (verdict ? new Set(verdict.mixinExports) : null), [verdict]);
-  const clusters = useMemo(
-    () => groupMixinClusters(conflicts, mods, mixinExports),
-    [conflicts, mods, mixinExports],
-  );
   const [plan, setPlan] = useState<ResolutionPlan | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2039,7 +1971,7 @@ export function ResolutionView({
     setError(null);
     setExported(null);
     try {
-      setPlan(await resolvePreview(modsPath, version));
+      setPlan(await resolvePreview(modsPath, version, [family]));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setPlan(null);
@@ -2054,7 +1986,7 @@ export function ResolutionView({
     setExporting(true);
     setError(null);
     try {
-      setExported(await resolveExport(modsPath, dir, version));
+      setExported(await resolveExport(modsPath, dir, version, [family]));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -2063,19 +1995,7 @@ export function ResolutionView({
   };
 
   return (
-    <div className="view">
-      <MixinResolver
-        clusters={clusters}
-        modsPath={modsPath}
-        version={version ?? ""}
-        verdict={verdict}
-        testing={testing}
-        onTest={onTest}
-        updatedJars={updatedJars}
-        onUpdated={onUpdated}
-      />
-
-      {clusters.length > 0 && <h2 className="resolution-section">Generated configs</h2>}
+    <>
       <section className="runner">
         <button
           className="btn-primary"
@@ -2083,7 +2003,7 @@ export function ResolutionView({
           onClick={() => void generate()}
           disabled={loading}
         >
-          {loading ? "generating…" : "Generate resolution"}
+          {loading ? "generating…" : generateLabel}
         </button>
       </section>
 
@@ -2127,6 +2047,244 @@ export function ResolutionView({
             </>
           )}
         </>
+      )}
+    </>
+  );
+}
+
+// Browse the conventional-tag overlaps (≥2 mods feeding the same `c:`/`forge:`
+// tag), each expanding to the per-mod item contributions.
+function TagsBrowse({ conflicts }: { conflicts: Conflict[] }) {
+  if (conflicts.length === 0) {
+    return (
+      <p className="note">No tag overlaps — no conventional tag is fed by more than one mod.</p>
+    );
+  }
+  return (
+    <>
+      <p className="note">
+        {conflicts.length} conventional tag{conflicts.length > 1 ? "s" : ""} fed by more than one
+        mod — duplicate content; unify picks one canonical item per tag.
+      </p>
+      <div className="conflict-groups">
+        {conflicts.map((c) => {
+          const n = conflictItems(c).length;
+          return (
+            <details key={conflictKey(c)} className="conflict-group">
+              <summary className="group-head">
+                <Chevron />
+                <span className="group-name recipe-pair">{conflictSubject(c)}</span>
+                <span className="group-count">
+                  · {c.members.length} mods · {n} item{n > 1 ? "s" : ""}
+                </span>
+              </summary>
+              <dl className="bymod">
+                {Object.entries(conflictByMod(c)).map(([mod, items]) => (
+                  <div className="bymod-row" key={mod}>
+                    <dt>{mod}</dt>
+                    <dd>{items.join(", ")}</dd>
+                  </div>
+                ))}
+              </dl>
+            </details>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+// Recipes sub-tab: browse the collisions, then generate the override datapack.
+function RecipesResolution({
+  conflicts,
+  modsPath,
+  version,
+}: {
+  conflicts: Conflict[];
+  modsPath: string;
+  version?: string;
+}) {
+  return (
+    <>
+      <RecipesView conflicts={conflicts} />
+      <h2 className="resolution-section">Override datapack</h2>
+      <ConfigGenerator
+        modsPath={modsPath}
+        version={version}
+        family="recipes"
+        generateLabel="Generate recipe datapack"
+      />
+    </>
+  );
+}
+
+// Tags sub-tab: browse the tag overlaps, then generate the Almost Unified config.
+function TagsResolution({
+  conflicts,
+  modsPath,
+  version,
+}: {
+  conflicts: Conflict[];
+  modsPath: string;
+  version?: string;
+}) {
+  const tagOverlaps = conflicts.filter((c) => c.type === "tag_overlap");
+  return (
+    <>
+      <TagsBrowse conflicts={tagOverlaps} />
+      <h2 className="resolution-section">unify.json</h2>
+      <ConfigGenerator
+        modsPath={modsPath}
+        version={version}
+        family="tags"
+        generateLabel="Generate unify.json"
+      />
+    </>
+  );
+}
+
+// Deps sub-tab: install the mods a boot flagged as missing. Reuses the verdict's
+// missing-dependency cause when present; otherwise offers an in-place boot.
+function DepsResolution({
+  verdict,
+  modsPath,
+  version,
+  loader,
+  onTest,
+  testing,
+}: {
+  verdict: RunVerdict | null;
+  modsPath: string;
+  version: string;
+  loader?: Loader;
+  onTest: () => void;
+  testing: boolean;
+}) {
+  const cause = verdict?.cause;
+  const missing = cause?.category === "missing_dependency" ? cause.mods : [];
+  if (missing.length > 0) {
+    return (
+      <MissingDepsPanel
+        key={`${verdict?.durationMs}:${missing.join(",")}`}
+        mods={missing}
+        modsPath={modsPath}
+        version={version}
+        loader={loader}
+        onRetest={onTest}
+        testing={testing}
+      />
+    );
+  }
+  return (
+    <>
+      <p className="note">
+        No missing-dependency verdict yet. A headless boot detects which dependencies the set is
+        missing; they can then be installed here.
+      </p>
+      <section className="runner">
+        <button className="btn-primary" type="button" onClick={onTest} disabled={testing}>
+          {testing ? "booting…" : "Run headless boot"}
+        </button>
+      </section>
+    </>
+  );
+}
+
+const RESOLUTION_SUBS: { id: ResolutionSub; label: string }[] = [
+  { id: "mixins", label: "Mixins" },
+  { id: "recipes", label: "Recipes" },
+  { id: "tags", label: "Tags" },
+  { id: "deps", label: "Deps" },
+];
+
+// The Resolution hub: one sub-tab per conflict family, each the single place to
+// act on it. Fed by the static scan and refined by the runtime verdict (mixin
+// confirmation, the missing-dependency list) when a boot has run.
+export function ResolutionView({
+  modsPath,
+  version,
+  conflicts,
+  mods,
+  verdict,
+  testing,
+  onTest,
+  updatedJars,
+  onUpdated,
+  loader,
+  sub,
+  setSub,
+}: {
+  modsPath: string;
+  version?: string;
+  conflicts: Conflict[];
+  mods: Mod[];
+  verdict: RunVerdict | null;
+  testing: boolean;
+  onTest: () => void;
+  updatedJars: Set<string>;
+  onUpdated: (jar: string) => void;
+  loader?: Loader;
+  sub: ResolutionSub;
+  setSub: (sub: ResolutionSub) => void;
+}) {
+  const mixinExports = useMemo(() => (verdict ? new Set(verdict.mixinExports) : null), [verdict]);
+  const clusters = useMemo(
+    () => groupMixinClusters(conflicts, mods, mixinExports),
+    [conflicts, mods, mixinExports],
+  );
+
+  return (
+    <div className="view">
+      <div className="subtabs" role="tablist">
+        {RESOLUTION_SUBS.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            role="tab"
+            aria-selected={sub === s.id}
+            className={sub === s.id ? "chip chip-on" : "chip"}
+            onClick={() => setSub(s.id)}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {sub === "mixins" &&
+        (clusters.length > 0 ? (
+          <MixinResolver
+            clusters={clusters}
+            modsPath={modsPath}
+            version={version ?? ""}
+            verdict={verdict}
+            testing={testing}
+            onTest={onTest}
+            updatedJars={updatedJars}
+            onUpdated={onUpdated}
+          />
+        ) : (
+          <p className="note">
+            No likely mixin conflicts — no two mods patch the same target incompatibly.
+          </p>
+        ))}
+
+      {sub === "recipes" && (
+        <RecipesResolution conflicts={conflicts} modsPath={modsPath} version={version} />
+      )}
+
+      {sub === "tags" && (
+        <TagsResolution conflicts={conflicts} modsPath={modsPath} version={version} />
+      )}
+
+      {sub === "deps" && (
+        <DepsResolution
+          verdict={verdict}
+          modsPath={modsPath}
+          version={version ?? ""}
+          loader={loader}
+          onTest={onTest}
+          testing={testing}
+        />
       )}
     </div>
   );
