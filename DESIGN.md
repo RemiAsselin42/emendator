@@ -3,12 +3,12 @@ version: alpha
 name: Emendator
 description: Emendator visual identity — gold / mauve contrast, dense and utilitarian but warm. Aimed at code agents.
 colors:
-  primary: "#DEB841"      # teal gold — sole driver of interaction
-  secondary: "#DE9E36"    # light orange — secondary accent / hover state
-  background: "#181719"   # mauve grey — global background (primary-background)
-  surface: "#6D6A75"      # light mauve grey — rare secondary surface + border color
-  text: "#F8F5FC"         # mauve white — text on dark backgrounds
-  on-accent: "#37323E"    # dark text placed on gold/orange accents (AA contrast)
+  primary: "#61c970"      # light green — sole driver of interaction
+  secondary: "#2d8848"    # dark green — secondary accent / hover state
+  background: "#171917"   # green grey — global background (primary-background)
+  surface: "#404741"      # light green grey — rare secondary surface + border color
+  text: "#dde1de"         # grey white — text on dark backgrounds
+  on-accent: "#37323e"    # dark text placed on green accents (AA contrast)
 typography:
   h1:
     fontFamily: "Poltawski Nowy"
@@ -26,22 +26,22 @@ typography:
     fontWeight: 600
     lineHeight: 1.3
   body-md:
-    fontFamily: "League Spartan"
+    fontFamily: "Host Grotesk"
     fontSize: 1rem
     fontWeight: 400
     lineHeight: 1.5
   body-sm:
-    fontFamily: "League Spartan"
+    fontFamily: "Host Grotesk"
     fontSize: 1rem        # floored at 16px (RGAA) — was 0.875rem
     fontWeight: 400
     lineHeight: 1.45
   label:
-    fontFamily: "League Spartan"
+    fontFamily: "Host Grotesk"
     fontSize: 1rem        # floored at 16px (RGAA) — was 0.8125rem
     fontWeight: 500
     lineHeight: 1.2
   button:
-    fontFamily: "League Spartan"
+    fontFamily: "Host Grotesk"
     fontSize: 1rem        # floored at 16px (RGAA) — was 0.875rem
     fontWeight: 600
     lineHeight: 1
@@ -104,9 +104,9 @@ Emendator — "one who removes flaws." The interface is a **dense, utilitarian t
 displays mod lists, conflicts, and boot verdicts. It must stay readable and calm, never
 decorative.
 
-The visual approach rests on a single tension: a **warm gold** (teal gold / orange) that
-cuts against a **dark mauve**. Gold is rare and precious — used only to signal interaction
-and action; everything else lives in mauve-greys. The result aims for a sober, high-contrast
+The visual approach rests on a single tension: a **warm green** (light green / dark green) that
+cuts against a **dark green**. Green is rare and precious — used only to signal interaction
+and action; everything else lives in green-greys. The result aims for a sober, high-contrast
 atmosphere where the eye goes straight to what is clickable or problematic.
 
 Guiding principle: **as little variation as possible**. One background, one accent color,
@@ -117,15 +117,15 @@ backgrounds or shadows.
 
 Five roles, plus one text color for accents.
 
-- **primary `#DEB841` (teal gold)** — sole driver of interaction: action buttons, links,
+- **primary `#61c970` (light green)** — sole driver of interaction: action buttons, links,
   focus, conflict highlight. Use sparingly so it remains a signal.
-- **secondary `#DE9E36` (light orange)** — secondary accent and **hover state** of gold.
+- **secondary `#2d8848` (dark green)** — secondary accent and **hover state** of green.
   Drives the color shift on hover (primary → secondary).
-- **background `#181719` (mauve grey)** — global background, present everywhere.
-- **surface `#6D6A75` (light mauve grey)** — dual role: default **border color**, and **rare**
+- **background `#171917` (green grey)** — global background, present everywhere.
+- **surface `#404741` (light green grey)** — dual role: default **border color**, and **rare**
   secondary surface (selected row, active area). Do not use as a generalized second background.
 - **text `#F8F5FC` (mauve white)** — body text on dark backgrounds.
-- **on-accent `#37323E`** — text placed **on** gold or orange. Essential: light text on gold
+- **on-accent `#37323E`** — text placed **on** green. Essential: light text on green
   fails contrast; dark text passes.
 
 Contrast (WCAG AA, threshold 4.5:1), verified:
@@ -146,7 +146,7 @@ Two families, both variable.
 
 - **Headings — Poltawski Nowy** (serif, 400–700). A serif with strong character for headers;
   brings warmth and personality.
-- **Body — League Spartan** (sans, 100–900). Geometric and compact, ideal for dense data
+- **Body — Host Grotesk** (sans, 100–900). Geometric and compact, ideal for dense data
   and small labels. **No forced uppercase** (see Do's & Don'ts).
 
 Imports (Google Fonts):
@@ -154,20 +154,20 @@ Imports (Google Fonts):
 ```html
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Poltawski+Nowy:ital,wght@0,400..700;1,400..700&family=League+Spartan:wght@100..900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poltawski+Nowy:ital,wght@0,400..700;1,400..700&family=Host+Grotesk:wght@100..900&display=swap" rel="stylesheet">
 ```
 
 ```css
 :root {
   --font-title: "Poltawski Nowy", serif;
-  --font-body:  "League Spartan", sans-serif;
+  --font-body:  "Host Grotesk", sans-serif;
 }
 .title { font-family: var(--font-title); font-optical-sizing: auto; }
 .body  { font-family: var(--font-body);  font-optical-sizing: auto; }
 ```
 
 Scale: `h1` / `h2` / `h3` in Poltawski Nowy; `body-md`, `body-sm`, `label`, `button` in
-League Spartan. Prefer compact tokens (`body-sm`, `label`) and no text at all (icon
+Host Grotesk. Prefer compact tokens (`body-sm`, `label`) and no text at all (icon
 sufficient) over long labels — but never below the 16px floor (see below).
 
 ### Minimum text size (RGAA)
