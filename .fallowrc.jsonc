@@ -15,5 +15,15 @@
   },
   "rules": {
     "unused-dependencies": "warn"
+  },
+  "security": {
+    "categories": {
+      // Exclude SSRF: every fetch() targets `${BASE}${endpoint}` where BASE is a
+      // build-time const (VITE_BACKEND_URL -> local sidecar) and endpoint is a
+      // string literal. No attacker-controlled URL surface exists, so fallow's
+      // "non-literal URL" candidates are all false positives. Inline ignores are
+      // not honored on the security surface; this is the supported suppression.
+      "exclude": ["ssrf"]
+    }
   }
 }
