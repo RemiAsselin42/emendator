@@ -1214,3 +1214,71 @@ a:hover {
   font-size: 1rem;
   opacity: 0.8;
 }
+
+/* --- Mixin resolver (Resolution tab) ------------------------------------- */
+.mixin-resolver {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+}
+
+/* Section divider between the mixin resolver and the generated-config block. */
+.resolution-section {
+  font-size: 1.25rem;
+  margin: var(--space-md) 0 0;
+}
+
+.mixin-cluster-body {
+  padding: 0 var(--space-md) var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.mixin-members {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.mixin-member {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.mixin-member-id {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  font-family: var(--font-body);
+}
+
+.mixin-member-v {
+  opacity: 0.6;
+}
+
+.mixin-member-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/* Reuse the ghost button; a compact text toggle for the reversible sideline. */
+.mixin-disable {
+  padding: 4px var(--space-sm);
+  border: var(--border);
+}
+
+.mixin-disable-disabled {
+  color: var(--color-secondary);
+}
+
+.mixin-disable-error {
+  color: var(--color-primary);
+}

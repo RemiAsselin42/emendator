@@ -201,6 +201,25 @@ export function installMod(
   return postJson<InstallResult>("/mods/install", { path, modId, version, loader });
 }
 
+export type DisableStatus = "disabled" | "enabled" | "not_found" | "error";
+
+export interface DisableResult {
+  status: DisableStatus;
+  jar: string | null;
+  message: string | null;
+}
+
+/** Disable a mod by sidelining its jar into `disabled/` — reversible, no download.
+ *  Used to resolve an incompatible mixin pair when no compatible update exists. */
+export function disableMod(path: string, jar: string): Promise<DisableResult> {
+  return postJson<DisableResult>("/mods/disable", { path, jar });
+}
+
+/** Re-enable a previously disabled mod (restores its jar from `disabled/`). */
+export function enableMod(path: string, jar: string): Promise<DisableResult> {
+  return postJson<DisableResult>("/mods/enable", { path, jar });
+}
+
 /** Raised when /mods/scan returns 409: the set spans incompatible version
  *  blocks and the user must pick one before scanning. */
 export class AmbiguousVersionError extends Error {

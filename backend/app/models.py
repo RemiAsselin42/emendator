@@ -319,6 +319,34 @@ class InstallResult(CamelModel):
     message: str | None = None
 
 
+# --- Disable / enable a mod (reversible sideline, never a delete) ------------
+
+# disabled = jar moved out of the active set into `disabled/`; enabled = restored;
+# not_found = jar absent; error = the move failed (no change made).
+DisableStatus = Literal["disabled", "enabled", "not_found", "error"]
+
+
+class DisableRequest(CamelModel):
+    """Body of ``POST /mods/disable`` and ``/mods/enable``: one jar in a folder.
+
+    ``disable`` moves ``mods/<jar>`` into ``mods/disabled/``; ``enable`` moves it
+    back. Reversible by design — when two mods incompatibly patch the same mixin
+    target and no compatible update exists, Emendator sidelines the loser rather
+    than deleting it, so the choice can always be undone.
+    """
+
+    path: str  # the mods folder
+    jar: str  # the jar filename (under mods/ for disable, under disabled/ for enable)
+
+
+class DisableResult(CamelModel):
+    """Outcome of disabling/enabling a mod (the reversible jar move)."""
+
+    status: DisableStatus
+    jar: str | None = None
+    message: str | None = None
+
+
 # --- Instances (launcher-native ingestion) -------------------------------
 
 # Where the dropped folder comes from. "raw_mods" = a bare mods/ folder (the

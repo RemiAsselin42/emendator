@@ -1,5 +1,5 @@
 // Pure helpers for presenting the conflict map (PROJECT.md §9).
-import type { Conflict, Severity } from "./api";
+import type { Conflict, Mod, Severity } from "./api";
 
 export const CONFLICT_LABEL: Record<Conflict["type"], string> = {
   duplicate_jar: "duplicate jar",
@@ -147,4 +147,94 @@ export function isRuntimeConfirmed(conflict: Conflict, mixinExports: Set<string>
 // Stable React key for a conflict row.
 export function conflictKey(c: Conflict): string {
   return `${c.type}-${conflictSubject(c)}-${c.members.join(",")}`;
+}
+
+// --- Mixin resolver: actionable clusters from the static overlap map ---------
+// The two-stage resolution the runner verdict can't do alone (PROJECT.md §7):
+//   1. disambiguate — a "mixin apply failed" line names only the *reporting* mod;
+//      the co-patchers are the other members sharing its target/method here.
+//   2. version-match — each member carries its enrichment (updateAvailable +
+//      latestVersion), so the front can offer "update to a compatible build"
+//      first, and a reversible disable as the fallback.
+
+export interface MixinClusterMember {
+  modId: string;
+  mod: Mod | null; // resolved top-level jar (null for a bundled/nested-only id)
+  jar: string | null;
+  currentVersion: string | null;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+}
+
+export interface MixinCluster {
+  key: string; // stable React key + headline ("modA ↔ modB")
+  members: MixinClusterMember[];
+  targets: string[]; // shared target classes across the cluster's overlaps
+  sharedMethods: string[]; // shared *method* names — the strong-conflict signal
+  confirmedAtRuntime: boolean; // a target was actually transformed at boot
+}
+
+// Build the actionable mixin clusters from the static `mixin_overlap` conflicts.
+// Only strong candidates surface: same-method overlaps (severity `warning`), plus
+// any class-level overlap the runtime actually transformed (`mixinExports`) — the
+// many benign class-only co-patches (e.g. MinecraftClient) stay out as noise.
+// Clusters group by the *set of mods* (a pair sharing several methods is one
+// cluster), runtime-confirmed first.
+export function groupMixinClusters(
+  conflicts: Conflict[],
+  mods: Mod[],
+  mixinExports: Set<string> | null,
+): MixinCluster[] {
+  const byId = new Map(mods.map((m) => [m.id, m] as const));
+  interface Acc {
+    members: string[];
+    targets: Set<string>;
+    methods: Set<string>;
+    confirmed: boolean;
+  }
+  const byMembers = new Map<string, Acc>();
+
+  for (const c of conflicts) {
+    if (c.type !== "mixin_overlap") continue;
+    const shared = conflictSharedMethods(c);
+    const confirmed = isRuntimeConfirmed(c, mixinExports);
+    if (shared.length === 0 && !confirmed) continue; // benign class-only overlap
+    const key = c.members.join(" ↔ ");
+    let acc = byMembers.get(key);
+    if (!acc) {
+      acc = { members: c.members, targets: new Set(), methods: new Set(), confirmed: false };
+      byMembers.set(key, acc);
+    }
+    const target = c.detail.target;
+    if (typeof target === "string" && target) acc.targets.add(target);
+    for (const m of shared) acc.methods.add(m);
+    acc.confirmed = acc.confirmed || confirmed;
+  }
+
+  const clusters: MixinCluster[] = [];
+  for (const [key, acc] of byMembers) {
+    const members = acc.members.map((id): MixinClusterMember => {
+      const mod = byId.get(id) ?? null;
+      return {
+        modId: id,
+        mod,
+        jar: mod?.jar ?? null,
+        currentVersion: mod?.version ?? null,
+        latestVersion: mod?.latestVersion ?? null,
+        updateAvailable: Boolean(mod?.updateAvailable),
+      };
+    });
+    clusters.push({
+      key,
+      members,
+      targets: [...acc.targets].sort(),
+      sharedMethods: [...acc.methods].sort(),
+      confirmedAtRuntime: acc.confirmed,
+    });
+  }
+  clusters.sort(
+    (a, b) =>
+      Number(b.confirmedAtRuntime) - Number(a.confirmedAtRuntime) || a.key.localeCompare(b.key),
+  );
+  return clusters;
 }
