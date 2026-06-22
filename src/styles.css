@@ -99,6 +99,10 @@ a:hover {
   gap: var(--space-lg);
 }
 
+.no-wrap {
+  white-space: nowrap;
+}
+
 /* Big centered title block at the top; the version bar is pinned to its
    top-right corner (at the title level). */
 .header {
@@ -137,12 +141,12 @@ a:hover {
 }
 
 .toast-error {
-  border-color: var(--color-secondary);
+  border-color: var(--color-error);
 }
 
 .toast-title {
   font-weight: 600;
-  color: var(--color-secondary);
+  color: var(--color-error);
 }
 
 .toast-body {
@@ -451,7 +455,7 @@ a:hover {
 /* Mod cards — one card per mod, full width, stacked. Borders separate them
    (DESIGN.md: no shadows, no stacked backgrounds). Inside the mods tab this is
    the only scroll region (flex:1 + min-height:0 lets it shrink and overflow).
-   The list is virtualized: .mods-virt is a spacer sized to the full list, and
+   The list is virtualized: .vlist-track is a spacer sized to the full list, and
    only the cards near the viewport are rendered, positioned with translateY. */
 .mods-list {
   flex: 1;
@@ -459,12 +463,14 @@ a:hover {
   overflow-y: auto;
 }
 
-.mods-virt {
+.vlist-track {
   position: relative;
   width: 100%;
+  /* Never let a flex scroll container (e.g. .conflict-groups) shrink the spacer. */
+  flex: none;
 }
 
-.mods-virt-item {
+.vlist-item {
   position: absolute;
   top: 0;
   left: 0;
@@ -917,7 +923,12 @@ a:hover {
   border-bottom: 2px solid var(--color-primary);
 }
 
-.chip {
+/* `.chip` is a stateful selector (filter / sub-tab / segmented toggle, see
+   `.chip-on`); `.btn-secondary` is a low-emphasis *action* button. They share
+   the same outline look but stay semantically distinct (a secondary button has no
+   "on" state). */
+.chip,
+.btn-secondary {
   background: none;
   border: var(--border);
   border-radius: var(--radius);
@@ -945,7 +956,8 @@ a:hover {
   background: var(--color-background);
 }
 
-.chip:hover {
+.chip:hover,
+.btn-secondary:hover {
   color: var(--color-primary);
 }
 
@@ -965,13 +977,14 @@ a:hover {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
-  max-height: calc(100vh - 16em);
+  max-height: calc(100vh - 35em);
   overflow: auto;
 }
 
 .conflict-group {
   border: var(--border);
   border-radius: var(--radius);
+  padding: var(--space-sm) 0;
 }
 
 .group-head,
@@ -1260,8 +1273,7 @@ a:hover {
 .mixin-member {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
+  gap: var(--space-sm);
 }
 
 .mixin-member-id {
@@ -1276,6 +1288,7 @@ a:hover {
 }
 
 .mixin-member-actions {
+  margin-left: auto;
   display: flex;
   align-items: center;
   gap: var(--space-sm);
@@ -1295,6 +1308,20 @@ a:hover {
   color: var(--color-primary);
 }
 
+/* The "+N more" reveal row inside a capped broad co-patch. */
+.mixin-more {
+  list-style: none;
+}
+
+/* The collapsed bucket that folds away the broad co-patches (the noise). */
+.mixin-broad-section {
+  margin-top: var(--space-sm);
+}
+
+.mixin-broad-section[open] > .group-head .chevron {
+  transform: rotate(180deg);
+}
+
 /* Runtime → Resolution handoff under a missing-dependency verdict. */
 .resolve-handoff {
   margin-top: var(--space-sm);
@@ -1302,8 +1329,25 @@ a:hover {
   padding: 4px var(--space-sm);
 }
 
+/* An inline word inside a .note that acts as a link (e.g. "Runtime" jumping to
+   the Runtime tab). Resets the button chrome to read as an anchor. */
+.note-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--color-primary);
+  text-decoration: underline;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.note-link:hover {
+  color: var(--color-secondary);
+}
+
 /* --- Resolution selection cards (Recipes / Tags) ------------------------- */
-/* Bounded, virtualized scroll region (reuses .mods-virt / .mods-virt-item). */
+/* Bounded, virtualized scroll region (reuses .vlist-track / .vlist-item). */
 .sel-list {
   max-height: calc(100dvh - 26rem);
   min-height: 200px;

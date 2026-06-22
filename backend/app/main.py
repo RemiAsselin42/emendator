@@ -11,6 +11,8 @@ from app.config import settings
 from app.enrich import enrich_mods
 from app.enrich.install import disable_mod, enable_mod, install_mod, update_mod
 from app.models import (
+    ApplyRequest,
+    ApplyResult,
     BisectResult,
     DisableRequest,
     DisableResult,
@@ -21,8 +23,11 @@ from app.models import (
     Instance,
     InstanceReport,
     ResolutionPlan,
+    ResolutionTargets,
     ResolutionVariants,
     ResolveRequest,
+    RevertRequest,
+    RevertResult,
     RunRequest,
     RunVerdict,
     ScanRequest,
@@ -39,6 +44,7 @@ from app.profile import (
     detect_version,
     resolve_profile,
 )
+from app.resolve.apply import apply_resolution, resolution_targets, revert_resolution
 from app.resolve.generate import build_resolution_plan, export_plan
 from app.resolve.variants import collect_recipe_variants, recipe_winner_bodies
 from app.runner.bisect import bisect_set
@@ -218,19 +224,19 @@ def mods_install(req: InstallRequest) -> InstallResult:
 
 @app.post("/mods/disable", response_model=DisableResult)
 def mods_disable(req: DisableRequest) -> DisableResult:
-    """Sideline a mod's jar into ``disabled/`` (reversible), in place.
+    """Disable a mod's jar in place by appending ``.disabled`` (reversible).
 
     Explicit user action from the mixin resolver: when two mods incompatibly
     patch the same target and no compatible update exists, disable one rather
-    than delete it. The jar is moved into ``mods/disabled/`` — excluded from
-    scans and boots — and ``/mods/enable`` restores it.
+    than delete it. The jar is renamed ``<jar>.disabled`` — excluded from scans
+    and boots (which glob ``*.jar``) — and ``/mods/enable`` strips the suffix.
     """
     return disable_mod(_require_dir(req.path), req.jar)
 
 
 @app.post("/mods/enable", response_model=DisableResult)
 def mods_enable(req: DisableRequest) -> DisableResult:
-    """Restore a previously disabled mod from ``disabled/`` back into the set."""
+    """Re-enable a disabled mod by stripping its ``.disabled`` suffix."""
     return enable_mod(_require_dir(req.path), req.jar)
 
 
@@ -321,3 +327,42 @@ def resolve_export(req: ExportRequest) -> ExportResult:
     out_dir = Path(req.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     return ExportResult(out_dir=str(out_dir), written=export_plan(plan, out_dir))
+
+
+def _resolve_for_instance(root: Path, version: str | None) -> VersionProfile:
+    """Resolve the version profile from an instance root (its mods live in mods/)."""
+    instance = detect_instance(root)
+    mods_dir = Path(instance.folders.mods) if instance.folders.mods else root
+    return _resolve_for(mods_dir, version)[0]
+
+
+@app.post("/resolve/targets", response_model=ResolutionTargets)
+def resolve_targets(req: VariantsRequest) -> ResolutionTargets:
+    """What the pack supports for applying a resolution (AU / Open Loader / worlds)."""
+    root = _require_dir(req.path)
+    return resolution_targets(root, _resolve_for_instance(root, req.version))
+
+
+@app.post("/resolve/apply", response_model=ApplyResult)
+def resolve_apply(req: ApplyRequest) -> ApplyResult:
+    """Write the resolution into the instance (reversibly) and return its manifest.
+
+    ``path`` is the instance root: the override datapack lands per-world or under
+    Open Loader (``target``), and ``unify.json`` under ``config/`` when Almost
+    Unified is installed. Honours the per-conflict winner picks.
+    """
+    root = _require_dir(req.path)
+    profile = _resolve_for_instance(root, req.version)
+    return apply_resolution(
+        root,
+        profile,
+        recipe_winners=req.recipe_winners,
+        tag_winners=req.tag_winners,
+        target=req.target,
+    )
+
+
+@app.post("/resolve/revert", response_model=RevertResult)
+def resolve_revert(req: RevertRequest) -> RevertResult:
+    """Undo a prior apply by its manifest path (deletes the files it wrote)."""
+    return revert_resolution(Path(req.manifest))

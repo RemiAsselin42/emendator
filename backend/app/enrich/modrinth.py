@@ -42,6 +42,7 @@ _NOT_INSTALLABLE = frozenset(
 # Mod ids whose Modrinth slug differs from the id declared in loader metadata.
 _INSTALL_ALIASES: dict[str, str] = {
     "fabric": "fabric-api",  # Fabric API's mod id is "fabric"; its slug is "fabric-api"
+    "openloader": "open-loader",  # Open Loader's mod id is "openloader"; its slug is "open-loader"
 }
 
 

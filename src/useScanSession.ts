@@ -40,7 +40,7 @@ export const TABS: { id: Tab; label: string }[] = [
 
 // Sub-tabs of the Resolution hub: one conflict family each. Mirrors the
 // Runtime view's Test/Bisect split.
-export type ResolutionSub = "mixins" | "recipes" | "tags" | "deps";
+export type ResolutionSub = "mixins" | "recipes" | "tags" | "apply" | "deps";
 
 export interface VersionOption {
   value: string;
@@ -383,6 +383,10 @@ export function useScanSession() {
     setTab("resolution");
   }, []);
 
+  // The reverse handoff: from Deps back to the Runtime tab, where a non-dependency
+  // crash cause is shown (Deps only installs missing deps).
+  const showRuntime = useCallback(() => setTab("runtime"), []);
+
   return {
     backendDown,
     path,
@@ -413,5 +417,6 @@ export function useScanSession() {
     resolutionSub,
     setResolutionSub,
     resolveMissingDeps,
+    showRuntime,
   };
 }

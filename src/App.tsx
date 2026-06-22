@@ -33,6 +33,7 @@ export default function App() {
     resolutionSub,
     setResolutionSub,
     resolveMissingDeps,
+    showRuntime,
   } = session;
 
   return (
@@ -93,6 +94,7 @@ export default function App() {
                 resolutionSub={resolutionSub}
                 setResolutionSub={setResolutionSub}
                 onResolveDeps={resolveMissingDeps}
+                onShowRuntime={showRuntime}
               />
               <ContentTabPanel tab={tab} report={report} />
             </div>
@@ -103,7 +105,7 @@ export default function App() {
       {backendDown && (
         <div className="toast toast-error" role="alert">
           <span className="toast-title">Backend unreachable</span>
-          <span className="toast-body">start the sidecar — retrying…</span>
+          <span className="toast-body">Retrying…</span>
         </div>
       )}
     </main>

@@ -301,6 +301,62 @@ class ResolutionVariants(CamelModel):
     recipes: dict[str, list[RecipeVariant]] = {}
 
 
+# --- Apply the resolution into the live instance (reversibly) ----------------
+
+# Where the override datapack lands. "per_world" copies it into each existing
+# world's datapacks/ (no dependency); "openloader" writes it under openloader/data/
+# for global loading (needs the Open Loader mod).
+ApplyTarget = Literal["per_world", "openloader"]
+
+
+class ResolutionTargets(CamelModel):
+    """What a pack can do with a resolution — drives the Apply UI before writing."""
+
+    almost_unified: bool  # AU present -> tags via unify.json instead of a re-tag datapack
+    open_loader: bool  # Open Loader present -> the global datapack target is available
+    worlds: list[str] = []  # existing datapack dirs (global + per-world) found in the pack
+
+
+class ApplyRequest(CamelModel):
+    """Body of ``POST /resolve/apply``: write the resolution into the instance."""
+
+    path: str  # the instance root (not the mods folder) — content folders are resolved from it
+    version: str | None = None
+    recipe_winners: dict[str, str] | None = None
+    tag_winners: dict[str, str] | None = None
+    target: ApplyTarget = "per_world"
+
+
+# applied = files written; nothing = no resolvable conflicts; error = write failed.
+ApplyStatus = Literal["applied", "nothing", "error"]
+
+
+class ApplyResult(CamelModel):
+    """Outcome of applying a resolution, with the manifest needed to revert it."""
+
+    status: ApplyStatus
+    written: list[str] = []  # absolute paths written
+    targets: list[str] = []  # the datapack dirs / config dir written into
+    manifest: str | None = None  # manifest file path (feed it back to /resolve/revert)
+    almost_unified: bool = False  # whether tags went to unify.json (AU) vs the datapack
+    open_loader: bool = False
+    message: str | None = None
+
+
+class RevertRequest(CamelModel):
+    """Body of ``POST /resolve/revert``: undo a prior apply by its manifest."""
+
+    manifest: str
+
+
+class RevertResult(CamelModel):
+    """Outcome of reverting an apply (the written files removed)."""
+
+    status: Literal["reverted", "not_found", "error"]
+    removed: list[str] = []
+    message: str | None = None
+
+
 class ExportResult(CamelModel):
     """Absolute paths written by an export."""
 
@@ -362,22 +418,22 @@ class InstallResult(CamelModel):
 
 # --- Disable / enable a mod (reversible sideline, never a delete) ------------
 
-# disabled = jar moved out of the active set into `disabled/`; enabled = restored;
-# not_found = jar absent; error = the move failed (no change made).
+# disabled = jar suffixed `.disabled` in place; enabled = the suffix stripped;
+# not_found = jar absent; error = the rename failed (no change made).
 DisableStatus = Literal["disabled", "enabled", "not_found", "error"]
 
 
 class DisableRequest(CamelModel):
     """Body of ``POST /mods/disable`` and ``/mods/enable``: one jar in a folder.
 
-    ``disable`` moves ``mods/<jar>`` into ``mods/disabled/``; ``enable`` moves it
-    back. Reversible by design — when two mods incompatibly patch the same mixin
-    target and no compatible update exists, Emendator sidelines the loser rather
-    than deleting it, so the choice can always be undone.
+    ``disable`` renames ``mods/<jar>`` to ``mods/<jar>.disabled`` in place; ``enable``
+    strips the suffix. Reversible by design — when two mods incompatibly patch the
+    same mixin target and no compatible update exists, Emendator sidelines the loser
+    rather than deleting it, so the choice can always be undone.
     """
 
     path: str  # the mods folder
-    jar: str  # the jar filename (under mods/ for disable, under disabled/ for enable)
+    jar: str  # the active jar filename (the `.disabled` suffix is added/removed internally)
 
 
 class DisableResult(CamelModel):

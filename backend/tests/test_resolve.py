@@ -11,6 +11,7 @@ from app.resolve.generate import (
     build_resolution_plan,
     export_plan,
     generate_recipe_datapack,
+    generate_tag_datapack,
     generate_unify_json,
 )
 from app.resolve.variants import collect_recipe_variants, recipe_winner_bodies
@@ -98,6 +99,37 @@ def test_build_plan_empty_when_no_resolvable_conflicts() -> None:
     )
     assert plan.files == []
     assert "No resolvable conflicts" in plan.summary
+
+
+def _tag_overlap_bymod(tag: str, by_mod: dict[str, list[str]]) -> Conflict:
+    return Conflict(
+        type="tag_overlap",
+        severity="info",
+        members=sorted(by_mod),
+        detail={"tag": tag, "byMod": by_mod},
+    )
+
+
+def test_tag_datapack_retags_to_default_winner() -> None:
+    conflict = _tag_overlap_bymod(
+        "c:crops/tomato",
+        {"croptopia": ["croptopia:tomato"], "farmersdelight": ["farmersdelight:tomato"]},
+    )
+    files = generate_tag_datapack([conflict])
+    by_path = {f.path: f.content for f in files}
+    written = json.loads(by_path["emendator-overrides/data/c/tags/items/crops/tomato.json"])
+    # Default winner = first mod alphabetically (croptopia); replace drops the other.
+    assert written == {"replace": True, "values": ["croptopia:tomato"]}
+
+
+def test_tag_datapack_honours_explicit_winner() -> None:
+    conflict = _tag_overlap_bymod(
+        "c:crops/tomato",
+        {"croptopia": ["croptopia:tomato"], "farmersdelight": ["farmersdelight:tomato"]},
+    )
+    files = generate_tag_datapack([conflict], {"c:crops/tomato": "farmersdelight"})
+    content = json.loads(files[0].content)
+    assert content["values"] == ["farmersdelight:tomato"]
 
 
 def test_unify_json_encodes_tag_winners() -> None:

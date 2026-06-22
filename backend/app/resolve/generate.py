@@ -53,6 +53,19 @@ def _recipe_segment(profile: VersionProfile) -> str:
     return profile.recipe_path.rstrip("/").split("/")[-1]
 
 
+def pack_mcmeta(profile: VersionProfile) -> GeneratedFile:
+    """The ``pack.mcmeta`` for the override datapack (version-appropriate format)."""
+    mcmeta = {
+        "pack": {
+            "pack_format": profile.datapack_format,
+            "description": f"Emendator overrides ({profile.profile})",
+        }
+    }
+    return GeneratedFile(
+        path=f"{DATAPACK_ROOT}/pack.mcmeta", content=json.dumps(mcmeta, indent=2) + "\n"
+    )
+
+
 def generate_recipe_datapack(
     recipe_collisions: list[Conflict],
     profile: VersionProfile,
@@ -68,12 +81,6 @@ def generate_recipe_datapack(
         return []
 
     bodies = recipe_bodies or {}
-    mcmeta = {
-        "pack": {
-            "pack_format": profile.datapack_format,
-            "description": f"Emendator recipe overrides ({profile.profile})",
-        }
-    }
     segment = _recipe_segment(profile)
     lines = [
         "# Recipe override datapack",
@@ -83,11 +90,7 @@ def generate_recipe_datapack(
         "winner is chosen; otherwise drop the one you want in yourself.",
         "",
     ]
-    files: list[GeneratedFile] = [
-        GeneratedFile(
-            path=f"{DATAPACK_ROOT}/pack.mcmeta", content=json.dumps(mcmeta, indent=2) + "\n"
-        )
-    ]
+    files: list[GeneratedFile] = [pack_mcmeta(profile)]
     for conflict in sorted(recipe_collisions, key=lambda c: str(c.detail.get("recipe", ""))):
         recipe_id = str(conflict.detail.get("recipe", ""))
         namespace, _, rel = recipe_id.partition(":")
@@ -100,6 +103,62 @@ def generate_recipe_datapack(
 
     files.append(GeneratedFile(path=f"{DATAPACK_ROOT}/README.md", content="\n".join(lines) + "\n"))
     return files
+
+
+def generate_tag_datapack(
+    tag_overlaps: list[Conflict], tag_winners: dict[str, str] | None = None
+) -> list[GeneratedFile]:
+    """Re-tag datapack files: the dependency-free fallback to Almost Unified.
+
+    Each conflicting conventional tag is rewritten to hold **only** the winning
+    mod's items (``{"replace": true, "values": [...]}``), so recipes/automation
+    that pull from the tag resolve to one canonical item. Tag paths are
+    version-independent (tags are always plural: ``data/<ns>/tags/items/<rel>``).
+    The winner defaults to the first mod alphabetically — the cards' default.
+    """
+    winners = tag_winners or {}
+    files: list[GeneratedFile] = []
+    for conflict in sorted(tag_overlaps, key=lambda c: str(c.detail.get("tag", ""))):
+        tag_id = str(conflict.detail.get("tag", ""))
+        by_mod = conflict.detail.get("byMod")
+        if not tag_id or not isinstance(by_mod, dict) or not by_mod:
+            continue
+        winner = winners.get(tag_id)
+        if winner not in by_mod:
+            winner = sorted(by_mod)[0]
+        raw = by_mod.get(winner, [])
+        items = sorted(str(i) for i in raw) if isinstance(raw, list) else []
+        namespace, _, rel = tag_id.partition(":")
+        content = json.dumps({"replace": True, "values": items}, indent=2) + "\n"
+        files.append(
+            GeneratedFile(
+                path=f"{DATAPACK_ROOT}/data/{namespace}/tags/items/{rel}.json", content=content
+            )
+        )
+    return files
+
+
+def assemble_override_datapack(
+    profile: VersionProfile,
+    recipe_collisions: list[Conflict],
+    tag_overlaps: list[Conflict],
+    *,
+    recipe_bodies: dict[str, str] | None = None,
+    tag_winners: dict[str, str] | None = None,
+) -> list[GeneratedFile]:
+    """One ``emendator-overrides/`` datapack: recipe winners + tag re-tags.
+
+    Pass ``tag_overlaps=[]`` when Almost Unified handles tags via ``unify.json``.
+    Returns ``[]`` when there is nothing to write; otherwise always carries a
+    ``pack.mcmeta`` (recipe-only, tags-only, or both).
+    """
+    recipe_files = generate_recipe_datapack(recipe_collisions, profile, recipe_bodies)
+    tag_files = generate_tag_datapack(tag_overlaps, tag_winners)
+    if not recipe_files and not tag_files:
+        return []
+    # generate_recipe_datapack already prepends pack.mcmeta; a tags-only pack needs its own.
+    head: list[GeneratedFile] = [] if recipe_files else [pack_mcmeta(profile)]
+    return head + recipe_files + tag_files
 
 
 def build_resolution_plan(
