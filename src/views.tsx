@@ -304,10 +304,11 @@ export function ConflictsView({
   );
 }
 
-// Recipe collisions get their own tab: same recipe id written by ≥2 mods, so the
-// loader keeps one and silently drops the rest (detectors.py). Aggregated by the
-// colliding mod set — the unit users act on — with the recipe ids behind expand.
-export function RecipesView({ conflicts }: { conflicts: Conflict[] }) {
+// Recipe-collision browse, shown in the Resolution › Recipes sub-tab: same recipe
+// id written by ≥2 mods, so the loader keeps one and silently drops the rest
+// (detectors.py). Aggregated by the colliding mod set — the unit users act on —
+// with the recipe ids behind expand.
+function RecipesView({ conflicts }: { conflicts: Conflict[] }) {
   const groups = useMemo(() => groupRecipeCollisions(conflicts), [conflicts]);
   const total = groups.reduce((n, g) => n + g.recipes.length, 0);
 
