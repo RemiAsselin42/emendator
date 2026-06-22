@@ -19,6 +19,7 @@ import type {
   RegistryIndex,
   ResolutionPlan,
   ResourcePack,
+  RunCause,
   RunVerdict,
   ScanResult,
   Severity,
@@ -419,6 +420,25 @@ function ErrorIcon() {
   );
 }
 
+// The update and install buttons share one lifecycle glyph: a single mapping from
+// a normalized phase to its icon, so neither has to repeat the five-way switch.
+type StatusPhase = "busy" | "done" | "warn" | "error" | "idle";
+
+function StatusIcon({ phase }: { phase: StatusPhase }) {
+  switch (phase) {
+    case "busy":
+      return <SpinnerIcon />;
+    case "done":
+      return <CheckIcon />;
+    case "warn":
+      return <WarnIcon />;
+    case "error":
+      return <ErrorIcon />;
+    default:
+      return <DownloadIcon />;
+  }
+}
+
 // idle -> download; updating -> spinner; done -> check (3s) then "gone" collapses
 // the width to 0 and "removed" unmounts it. warn/error end the run in place with
 // an alert icon (warn = nothing installed but no failure; error = update failed).
@@ -427,21 +447,59 @@ type UpdateState = "idle" | "updating" | "done" | "gone" | "removed" | "warn" | 
 const DONE_HOLD_MS = 3000; // how long the check stays before collapsing
 const COLLAPSE_MS = 350; // matches the width transition before unmounting
 
-// The "update available" affordance: a download-icon button that downloads the
-// latest Modrinth version and swaps the jar in place, then confirms and fades out.
-function UpdateButton({
-  mod,
-  modsPath,
-  version,
-  alreadyUpdated,
-  onUpdated,
-}: {
-  mod: ScanResult["mods"][number];
-  modsPath: string;
-  version: string;
-  alreadyUpdated: boolean;
-  onUpdated: (jar: string) => void;
-}) {
+// The button is only actionable from a resting state; "updating"/"done"/"gone"
+// lock it. Shared by the click guard and the disabled attribute.
+function updateLocked(state: UpdateState): boolean {
+  return state !== "idle" && state !== "error" && state !== "warn";
+}
+
+function updatePhase(state: UpdateState): StatusPhase {
+  switch (state) {
+    case "updating":
+      return "busy";
+    case "done":
+    case "gone":
+      return "done";
+    case "warn":
+      return "warn";
+    case "error":
+      return "error";
+    default:
+      return "idle";
+  }
+}
+
+function updateButtonTitle(
+  state: UpdateState,
+  msg: string | null,
+  latestVersion: string | null,
+): string {
+  const arrow = latestVersion ? ` → ${latestVersion}` : "";
+  switch (state) {
+    case "error":
+      return msg ?? "update failed";
+    case "warn":
+      return msg ?? "no update installed";
+    case "done":
+    case "gone":
+      return `updated${arrow} · rescan to refresh`;
+    case "updating":
+      return "updating…";
+    default:
+      return `update${arrow}`;
+  }
+}
+
+// The update lifecycle: holds the state machine, the in-place swap call, and the
+// done → gone → removed timer chain (cleared on unmount). Kept out of the button
+// so the component is just render.
+function useUpdateButton(
+  mod: ScanResult["mods"][number],
+  modsPath: string,
+  version: string,
+  alreadyUpdated: boolean,
+  onUpdated: (jar: string) => void,
+) {
   // A card remounted after its jar was already updated this session (e.g. on
   // returning to the panel) starts "removed" — the button is done, render nothing.
   const [state, setState] = useState<UpdateState>(alreadyUpdated ? "removed" : "idle");
@@ -455,20 +513,8 @@ function UpdateButton({
     };
   }, []);
 
-  const done = state === "done" || state === "gone";
-  const title =
-    state === "error"
-      ? (msg ?? "update failed")
-      : state === "warn"
-        ? (msg ?? "no update installed")
-        : done
-          ? `updated${mod.latestVersion ? ` → ${mod.latestVersion}` : ""} · rescan to refresh`
-          : state === "updating"
-            ? "updating…"
-            : `update${mod.latestVersion ? ` → ${mod.latestVersion}` : ""}`;
-
   const onClick = async () => {
-    if (state !== "idle" && state !== "error" && state !== "warn") return;
+    if (updateLocked(state)) return;
     setState("updating");
     setMsg(null);
     try {
@@ -497,36 +543,12 @@ function UpdateButton({
     }
   };
 
-  if (state === "removed") return null;
-
-  const icon =
-    state === "updating" ? (
-      <SpinnerIcon />
-    ) : done ? (
-      <CheckIcon />
-    ) : state === "warn" ? (
-      <WarnIcon />
-    ) : state === "error" ? (
-      <ErrorIcon />
-    ) : (
-      <DownloadIcon />
-    );
-
-  return (
-    <button
-      type="button"
-      className={`mod-update mod-update-${state}`}
-      onClick={onClick}
-      disabled={state !== "idle" && state !== "error" && state !== "warn"}
-      title={title}
-      aria-label={title}
-    >
-      {icon}
-    </button>
-  );
+  return { state, msg, onClick };
 }
 
-function ModCard({
+// The "update available" affordance: a download-icon button that downloads the
+// latest Modrinth version and swaps the jar in place, then confirms and fades out.
+function UpdateButton({
   mod,
   modsPath,
   version,
@@ -539,61 +561,76 @@ function ModCard({
   alreadyUpdated: boolean;
   onUpdated: (jar: string) => void;
 }) {
+  const { state, msg, onClick } = useUpdateButton(
+    mod,
+    modsPath,
+    version,
+    alreadyUpdated,
+    onUpdated,
+  );
+
+  if (state === "removed") return null;
+
+  const title = updateButtonTitle(state, msg, mod.latestVersion);
+
+  return (
+    <button
+      type="button"
+      className={`mod-update mod-update-${state}`}
+      onClick={onClick}
+      disabled={updateLocked(state)}
+      title={title}
+      aria-label={title}
+    >
+      <StatusIcon phase={updatePhase(state)} />
+    </button>
+  );
+}
+
+type ModEntry = ScanResult["mods"][number];
+
+// Title block: linked name when an enrichment homepage is known, plus the slug
+// (id) underneath whenever a human-readable name displaced it above.
+function ModCardTitle({ mod }: { mod: ModEntry }) {
+  return (
+    <div className="mod-card-id">
+      <h3 className="mod-name">
+        {mod.homepage ? (
+          <a href={mod.homepage} target="_blank" rel="noreferrer">
+            {mod.name ?? mod.id}
+          </a>
+        ) : (
+          (mod.name ?? mod.id)
+        )}
+      </h3>
+      {mod.name && <span className="mod-slug">{mod.id}</span>}
+    </div>
+  );
+}
+
+// Provider / loader / environment badges; loader is hidden when unknown.
+function ModCardTags({ mod }: { mod: ModEntry }) {
+  return (
+    <div className="mod-card-tags">
+      {mod.provider && (
+        <span className={`mod-provider provider-${mod.provider}`}>{mod.provider}</span>
+      )}
+      {mod.loader !== "unknown" && (
+        <span className={`mod-loader loader-${mod.loader}`}>{mod.loader}</span>
+      )}
+      <span className={`mod-env env-${mod.environment === "*" ? "any" : mod.environment}`}>
+        {mod.environment === "*" ? "client+server" : mod.environment}
+      </span>
+    </div>
+  );
+}
+
+// The depends/provides tag lists, each shown only when non-empty. depends carries
+// a flattened version constraint; provides is a bare id list.
+function ModRelations({ mod }: { mod: ModEntry }) {
   const depends = Object.entries(mod.depends);
   return (
-    <article className="mod-card">
-      <header className="mod-card-head">
-        <div className="mod-card-id">
-          <h3 className="mod-name">
-            {mod.homepage ? (
-              <a href={mod.homepage} target="_blank" rel="noreferrer">
-                {mod.name ?? mod.id}
-              </a>
-            ) : (
-              (mod.name ?? mod.id)
-            )}
-          </h3>
-          {mod.name && <span className="mod-slug">{mod.id}</span>}
-        </div>
-        <div className="mod-card-right">
-          <div className="mod-card-tags">
-            {mod.provider && (
-              <span className={`mod-provider provider-${mod.provider}`}>{mod.provider}</span>
-            )}
-            {mod.loader !== "unknown" && (
-              <span className={`mod-loader loader-${mod.loader}`}>{mod.loader}</span>
-            )}
-            <span className={`mod-env env-${mod.environment === "*" ? "any" : mod.environment}`}>
-              {mod.environment === "*" ? "client+server" : mod.environment}
-            </span>
-          </div>
-          {mod.updateAvailable && (
-            <UpdateButton
-              mod={mod}
-              modsPath={modsPath}
-              version={version}
-              alreadyUpdated={alreadyUpdated}
-              onUpdated={onUpdated}
-            />
-          )}
-        </div>
-      </header>
-
-      <dl className="mod-meta">
-        <div className="mod-field">
-          <dt>version</dt>
-          <dd>{mod.version ?? "—"}</dd>
-        </div>
-        <div className="mod-field">
-          <dt>minecraft</dt>
-          <dd>{mod.mcVersion ?? "—"}</dd>
-        </div>
-        <div className="mod-field">
-          <dt>jar</dt>
-          <dd className="mod-jar">{mod.jar}</dd>
-        </div>
-      </dl>
-
+    <>
       {depends.length > 0 && (
         <div className="mod-rel">
           <span className="mod-rel-label">depends</span>
@@ -623,6 +660,57 @@ function ModCard({
           </ul>
         </div>
       )}
+    </>
+  );
+}
+
+function ModCard({
+  mod,
+  modsPath,
+  version,
+  alreadyUpdated,
+  onUpdated,
+}: {
+  mod: ModEntry;
+  modsPath: string;
+  version: string;
+  alreadyUpdated: boolean;
+  onUpdated: (jar: string) => void;
+}) {
+  return (
+    <article className="mod-card">
+      <header className="mod-card-head">
+        <ModCardTitle mod={mod} />
+        <div className="mod-card-right">
+          <ModCardTags mod={mod} />
+          {mod.updateAvailable && (
+            <UpdateButton
+              mod={mod}
+              modsPath={modsPath}
+              version={version}
+              alreadyUpdated={alreadyUpdated}
+              onUpdated={onUpdated}
+            />
+          )}
+        </div>
+      </header>
+
+      <dl className="mod-meta">
+        <div className="mod-field">
+          <dt>version</dt>
+          <dd>{mod.version ?? "—"}</dd>
+        </div>
+        <div className="mod-field">
+          <dt>minecraft</dt>
+          <dd>{mod.mcVersion ?? "—"}</dd>
+        </div>
+        <div className="mod-field">
+          <dt>jar</dt>
+          <dd className="mod-jar">{mod.jar}</dd>
+        </div>
+      </dl>
+
+      <ModRelations mod={mod} />
     </article>
   );
 }
@@ -673,6 +761,46 @@ type ModListEntry =
 const CARD_ESTIMATE = 120;
 const CARD_GAP = 16; // matches --space-md, the old flex gap between cards
 const OVERSCAN = 4; // cards rendered just outside the viewport, each side
+
+interface ModWindow {
+  tops: number[];
+  totalH: number;
+  start: number;
+  end: number;
+}
+
+// Pure windowing math: the cumulative top offset of every card (from the measured
+// or estimated heights), the total scroll height, and the [start, end) slice of
+// entries intersecting the viewport plus overscan. Recomputed every render (heights
+// is a mutable ref a measure pass mutates), so it's kept pure and out of the body.
+function computeWindow(
+  entries: ModListEntry[],
+  heights: Map<string, number>,
+  scrollTop: number,
+  viewportH: number,
+): ModWindow {
+  const tops = new Array<number>(entries.length);
+  let acc = 0;
+  for (let i = 0; i < entries.length; i++) {
+    tops[i] = acc;
+    acc += (heights.get(entries[i].jar) ?? CARD_ESTIMATE) + CARD_GAP;
+  }
+  const totalH = entries.length > 0 ? acc - CARD_GAP : 0;
+
+  const bottom = scrollTop + viewportH;
+  let start = 0;
+  while (start < entries.length) {
+    const h = heights.get(entries[start].jar) ?? CARD_ESTIMATE;
+    if (tops[start] + h >= scrollTop) break;
+    start++;
+  }
+  let end = start;
+  while (end < entries.length && tops[end] <= bottom) end++;
+  start = Math.max(0, start - OVERSCAN);
+  end = Math.min(entries.length, end + OVERSCAN);
+
+  return { tops, totalH, start, end };
+}
 
 // Windowed mod list: only the cards intersecting the viewport (plus a small
 // overscan) live in the DOM. Heights are variable (depends/provides differ per
@@ -746,29 +874,14 @@ function VirtualModList({
     if (changed) bump();
   });
 
-  // Cumulative top offset of every card from the measured/estimated heights.
-  // Computed every render (not memoized): heights is a mutable ref, so a measure
-  // pass that calls bump() must recompute offsets with the same `mods`.
-  const tops = new Array<number>(entries.length);
-  let acc = 0;
-  for (let i = 0; i < entries.length; i++) {
-    tops[i] = acc;
-    acc += (heights.current.get(entries[i].jar) ?? CARD_ESTIMATE) + CARD_GAP;
-  }
-  const totalH = entries.length > 0 ? acc - CARD_GAP : 0;
-
-  const top = scrollTop;
-  const bottom = scrollTop + viewportH;
-  let start = 0;
-  while (start < entries.length) {
-    const h = heights.current.get(entries[start].jar) ?? CARD_ESTIMATE;
-    if (tops[start] + h >= top) break;
-    start++;
-  }
-  let end = start;
-  while (end < entries.length && tops[end] <= bottom) end++;
-  start = Math.max(0, start - OVERSCAN);
-  end = Math.min(entries.length, end + OVERSCAN);
+  // Recomputed every render (not memoized): heights is a mutable ref, so a measure
+  // pass that calls bump() must recompute offsets with the same `entries`.
+  const { tops, totalH, start, end } = computeWindow(
+    entries,
+    heights.current,
+    scrollTop,
+    viewportH,
+  );
 
   const window = entries.slice(start, end);
 
@@ -814,6 +927,58 @@ const ENV_FILTERS: { id: ModEnvironment; label: string }[] = [
   { id: "client", label: "Client" },
   { id: "*", label: "Client + Server" },
 ];
+
+// The active mod-list filters, derived once per query/toggle change and shared by
+// the per-entry predicates below.
+interface ModFilters {
+  q: string;
+  envActive: boolean;
+  envs: Set<ModEnvironment>;
+  onlyUpdate: boolean;
+  onlyErrors: boolean;
+  updatedJars: Set<string>;
+}
+
+// Errors carry no env/update facet, so an env or update-only filter scopes the
+// list to mods and drops them — unless the errors chip is also on.
+function matchesErrorEntry(
+  entry: Extract<ModListEntry, { kind: "error" }>,
+  { q, envActive, onlyUpdate, onlyErrors }: ModFilters,
+): boolean {
+  if (envActive || (onlyUpdate && !onlyErrors)) return false;
+  if (q) return `${entry.name} ${entry.jar} ${entry.reason}`.toLowerCase().includes(q);
+  return true;
+}
+
+// Free-text search over a mod's identity, version, jar, and relations.
+function modMatchesQuery(mod: ModEntry, q: string): boolean {
+  const haystack = [
+    mod.id,
+    mod.name ?? "",
+    mod.version ?? "",
+    mod.jar,
+    mod.loader,
+    ...mod.provides,
+    ...Object.keys(mod.depends),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(q);
+}
+
+function matchesModEntry(mod: ModEntry, filters: ModFilters): boolean {
+  const { q, envActive, envs, onlyUpdate, onlyErrors, updatedJars } = filters;
+  if (onlyErrors && !onlyUpdate) return false;
+  if (envActive && !envs.has(mod.environment)) return false;
+  if (onlyUpdate && (!mod.updateAvailable || updatedJars.has(mod.jar))) return false;
+  return !q || modMatchesQuery(mod, q);
+}
+
+function matchesFilters(entry: ModListEntry, filters: ModFilters): boolean {
+  return entry.kind === "error"
+    ? matchesErrorEntry(entry, filters)
+    : matchesModEntry(entry.mod, filters);
+}
 
 function ModsSection({
   result,
@@ -878,34 +1043,15 @@ function ModsSection({
   }, [result.mods, result.errors]);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const envActive = envs.size > 0;
-    return entries.filter((entry) => {
-      if (entry.kind === "error") {
-        // Errors carry no env/update facet, so an env or update-only filter scopes
-        // the list to mods and drops them — unless the errors chip is also on.
-        if (envActive || (onlyUpdate && !onlyErrors)) return false;
-        if (q) return `${entry.name} ${entry.jar} ${entry.reason}`.toLowerCase().includes(q);
-        return true;
-      }
-      const mod = entry.mod;
-      if (onlyErrors && !onlyUpdate) return false;
-      if (envActive && !envs.has(mod.environment)) return false;
-      if (onlyUpdate && (!mod.updateAvailable || updatedJars.has(mod.jar))) return false;
-      if (!q) return true;
-      const haystack = [
-        mod.id,
-        mod.name ?? "",
-        mod.version ?? "",
-        mod.jar,
-        mod.loader,
-        ...mod.provides,
-        ...Object.keys(mod.depends),
-      ]
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(q);
-    });
+    const filters: ModFilters = {
+      q: query.trim().toLowerCase(),
+      envActive: envs.size > 0,
+      envs,
+      onlyUpdate,
+      onlyErrors,
+      updatedJars,
+    };
+    return entries.filter((entry) => matchesFilters(entry, filters));
   }, [entries, query, envs, onlyUpdate, onlyErrors, updatedJars]);
 
   return (
@@ -986,6 +1132,37 @@ type InstallState = "idle" | "installing" | "installed" | "warn" | "error";
 // trigger for the panel's auto re-test once every dep has been dealt with.
 const SETTLED: ReadonlySet<InstallState> = new Set(["installed", "warn", "error"]);
 
+// Install states map onto the shared button visuals: installing→busy/updating,
+// installed→done, warn/error as-is.
+function installPhase(state: InstallState): StatusPhase {
+  switch (state) {
+    case "installing":
+      return "busy";
+    case "installed":
+      return "done";
+    case "warn":
+      return "warn";
+    case "error":
+      return "error";
+    default:
+      return "idle";
+  }
+}
+
+function installRowTitle(state: InstallState, msg: string | null, modId: string): string {
+  switch (state) {
+    case "installed":
+      return `installed ${msg}`;
+    case "warn":
+    case "error":
+      return msg ?? "install failed";
+    case "installing":
+      return "installing…";
+    default:
+      return `install ${modId} from Modrinth`;
+  }
+}
+
 // One missing dependency: its id and a download-icon button driven by the panel's
 // state (so "Install all" and per-row clicks share one source of truth).
 function InstallRow({
@@ -1001,28 +1178,9 @@ function InstallRow({
   disabled: boolean;
   onInstall: (modId: string) => void;
 }) {
-  // Map install states onto the existing mod-update button visuals.
+  // Reuse the mod-update button class names; only the icon set differs by phase.
   const btnState = state === "installing" ? "updating" : state === "installed" ? "done" : state;
-  const icon =
-    state === "installing" ? (
-      <SpinnerIcon />
-    ) : state === "installed" ? (
-      <CheckIcon />
-    ) : state === "warn" ? (
-      <WarnIcon />
-    ) : state === "error" ? (
-      <ErrorIcon />
-    ) : (
-      <DownloadIcon />
-    );
-  const title =
-    state === "installed"
-      ? `installed ${msg}`
-      : state === "warn" || state === "error"
-        ? (msg ?? "install failed")
-        : state === "installing"
-          ? "installing…"
-          : `install ${modId} from Modrinth`;
+  const title = installRowTitle(state, msg, modId);
 
   return (
     <li className="missing-row">
@@ -1035,7 +1193,7 @@ function InstallRow({
         title={title}
         aria-label={title}
       >
-        {icon}
+        <StatusIcon phase={installPhase(state)} />
       </button>
       {msg && <span className="note missing-msg">{msg}</span>}
     </li>
@@ -1167,6 +1325,102 @@ function RunnerUnsupported({ block }: { block: string | null }) {
   );
 }
 
+// The suspected cause of a verdict: summary, the mods that may be involved, an
+// optional log excerpt, and — when the cause is a missing dependency — the
+// installer. `durationMs` only keys the installer so it remounts per verdict.
+function VerdictCause({
+  cause,
+  durationMs,
+  modsPath,
+  version,
+  loader,
+  onTest,
+  testing,
+}: {
+  cause: RunCause;
+  durationMs: number;
+  modsPath: string;
+  version: string;
+  loader?: Loader;
+} & TestProps) {
+  return (
+    <>
+      <p className="note">
+        {cause.category}: {cause.summary}
+      </p>
+      <p>
+        The runner detected {cause.mods.length} mod
+        {cause.mods.length > 1 ? "s" : ""} that may be involved :
+      </p>
+      <ul>
+        <li className="note cause-mods">{cause.mods.length > 0 && `${cause.mods.join(", ")}`}</li>
+      </ul>
+      {cause.excerpt && (
+        <details className="cause-excerpt">
+          <summary>Causes</summary>
+          <pre className="log">{cause.excerpt}</pre>
+        </details>
+      )}
+      {cause.category === "missing_dependency" && cause.mods.length > 0 && (
+        <MissingDepsPanel
+          key={`${durationMs}:${cause.mods.join(",")}`}
+          mods={cause.mods}
+          modsPath={modsPath}
+          version={version}
+          loader={loader}
+          onRetest={onTest}
+          testing={testing}
+        />
+      )}
+    </>
+  );
+}
+
+// The verdict readout: status line, the suspected cause (with the missing-deps
+// installer when that's the category), and the log tail.
+function VerdictPanel({
+  verdict,
+  modsPath,
+  version,
+  loader,
+  onTest,
+  testing,
+}: {
+  verdict: RunVerdict;
+  modsPath: string;
+  version: string;
+  loader?: Loader;
+} & TestProps) {
+  return (
+    <div className="panel">
+      <p>
+        <span className={`run-${verdict.status}`}>{verdict.status.toUpperCase()}</span>
+        {" · "}
+        {(verdict.durationMs / 1000).toFixed(1)}s
+        {verdict.mixinExports.length > 0 &&
+          ` · ${verdict.mixinExports.length} mixin-transformed classes (ground truth)`}
+      </p>
+      {verdict.cause && (
+        <VerdictCause
+          cause={verdict.cause}
+          durationMs={verdict.durationMs}
+          modsPath={modsPath}
+          version={version}
+          loader={loader}
+          onTest={onTest}
+          testing={testing}
+        />
+      )}
+      {verdict.logTail && verdict.status !== "error" && (
+        <details className="log-tail">
+          <summary>Log tail</summary>
+          <pre className="log">{verdict.logTail}</pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
 // "Test" sub-tab: boot the whole set headlessly and read the verdict (plus the
 // missing-dependency installer when that's the cause).
 function TestView({
@@ -1195,57 +1449,48 @@ function TestView({
       </section>
 
       {verdict ? (
-        <div className="panel">
-          <p>
-            <span className={`run-${verdict.status}`}>{verdict.status.toUpperCase()}</span>
-            {" · "}
-            {(verdict.durationMs / 1000).toFixed(1)}s
-            {verdict.mixinExports.length > 0 &&
-              ` · ${verdict.mixinExports.length} mixin-transformed classes (ground truth)`}
-          </p>
-          {verdict.cause && (
-            <>
-              <p className="note">
-                {verdict.cause.category}: {verdict.cause.summary}
-              </p>
-              <p>
-                The runner detected {verdict.cause.mods.length} mod
-                {verdict.cause.mods.length > 1 ? "s" : ""} that may be involved :
-              </p>
-              <ul>
-                <li className="note cause-mods">
-                  {verdict.cause.mods.length > 0 && `${verdict.cause.mods.join(", ")}`}
-                </li>
-              </ul>
-              {verdict.cause.excerpt && (
-                <details className="cause-excerpt">
-                  <summary>Causes</summary>
-                  <pre className="log">{verdict.cause.excerpt}</pre>
-                </details>
-              )}
-              {verdict.cause.category === "missing_dependency" && verdict.cause.mods.length > 0 && (
-                <MissingDepsPanel
-                  key={`${verdict.durationMs}:${verdict.cause.mods.join(",")}`}
-                  mods={verdict.cause.mods}
-                  modsPath={modsPath}
-                  version={version}
-                  loader={loader}
-                  onRetest={onTest}
-                  testing={testing}
-                />
-              )}
-            </>
-          )}
-          {verdict.logTail && verdict.status !== "error" && (
-            <details className="log-tail">
-              <summary>Log tail</summary>
-              <pre className="log">{verdict.logTail}</pre>
-            </details>
-          )}
-        </div>
+        <VerdictPanel
+          verdict={verdict}
+          modsPath={modsPath}
+          version={version}
+          loader={loader}
+          onTest={onTest}
+          testing={testing}
+        />
       ) : (
         <p className="note">No boot yet. Run a test to get a runtime verdict.</p>
       )}
+    </div>
+  );
+}
+
+// The bisection readout: status line, the isolated guilty set, the cause, and any
+// inconclusive note.
+function BisectPanel({ bisectResult }: { bisectResult: BisectResult }) {
+  return (
+    <div className="panel">
+      <p>
+        bisection{" "}
+        <span className={bisectStatusClass(bisectResult.status)}>
+          {bisectResult.status.toUpperCase()}
+        </span>
+        {" · "}
+        {bisectResult.boots} boots · {(bisectResult.durationMs / 1000).toFixed(1)}s
+      </p>
+      {bisectResult.members.length > 0 && (
+        <>
+          <p className="members">The guilty set that caused the issue: </p>
+          <ul>
+            <li className="note cause-mods">{bisectResult.members.join(", ")}</li>
+          </ul>
+        </>
+      )}
+      {bisectResult.cause && (
+        <p className="note">
+          {bisectResult.cause.category}: {bisectResult.cause.summary}
+        </p>
+      )}
+      {bisectResult.note && <p className="note">{bisectResult.note}</p>}
     </div>
   );
 }
@@ -1282,32 +1527,7 @@ function BisectView({
       </section>
 
       {bisectResult ? (
-        <div className="panel">
-          <p>
-            bisection{" "}
-            <span className={bisectStatusClass(bisectResult.status)}>
-              {bisectResult.status.toUpperCase()}
-            </span>
-            {" · "}
-            {bisectResult.boots} boots · {(bisectResult.durationMs / 1000).toFixed(1)}s
-          </p>
-          {bisectResult.members.length > 0 && (
-            <>
-              <p className="members">The guilty set that caused the issue: </p>
-              <ul>
-                <li className="note cause-mods">
-                  {bisectResult.members.length > 0 && `${bisectResult.members.join(", ")}`}
-                </li>
-              </ul>
-            </>
-          )}
-          {bisectResult.cause && (
-            <p className="note">
-              {bisectResult.cause.category}: {bisectResult.cause.summary}
-            </p>
-          )}
-          {bisectResult.note && <p className="note">{bisectResult.note}</p>}
-        </div>
+        <BisectPanel bisectResult={bisectResult} />
       ) : (
         <p className="note">No bisection yet. Run one to isolate the guilty subset.</p>
       )}
