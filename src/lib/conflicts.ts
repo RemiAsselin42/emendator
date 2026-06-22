@@ -84,34 +84,6 @@ export function resolutionNote(c: Conflict): string | null {
 
 export const isRecipeCollision = (c: Conflict): boolean => c.type === "recipe_collision";
 
-export interface RecipeCollisionGroup {
-  key: string; // stable React key + display label
-  members: string[]; // the mods fighting over these recipe ids
-  recipes: string[]; // sorted recipe ids they both write
-}
-
-// Recipe collisions cluster by the *set of mods* that fight over recipe ids:
-// the actionable unit is "these two mods override each other across N recipes",
-// far less saturating than one row per recipe. Groups sorted by count desc.
-export function groupRecipeCollisions(conflicts: Conflict[]): RecipeCollisionGroup[] {
-  const byMembers = new Map<string, RecipeCollisionGroup>();
-  for (const c of conflicts) {
-    if (!isRecipeCollision(c)) continue;
-    const key = c.members.join(" ↔ ");
-    let group = byMembers.get(key);
-    if (!group) {
-      group = { key, members: c.members, recipes: [] };
-      byMembers.set(key, group);
-    }
-    const recipe = String(c.detail.recipe ?? "");
-    if (recipe) group.recipes.push(recipe);
-  }
-  const groups = [...byMembers.values()];
-  for (const g of groups) g.recipes.sort();
-  groups.sort((a, b) => b.recipes.length - a.recipes.length || a.key.localeCompare(b.key));
-  return groups;
-}
-
 // One-line subject for a conflict row, by type.
 export function conflictSubject(c: Conflict): string {
   const d = c.detail;

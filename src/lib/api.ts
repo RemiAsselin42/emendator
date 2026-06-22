@@ -143,18 +143,6 @@ export function bisectSet(path: string, version?: string): Promise<BisectResult>
 
 // --- Phase 4: no-code resolution (PROJECT.md §10, §12) -------------------
 
-export interface GeneratedFile {
-  path: string;
-  content: string;
-}
-
-export interface ResolutionPlan {
-  profile: string;
-  files: GeneratedFile[];
-  summary: string;
-  modPriorities: string[];
-}
-
 export interface ExportResult {
   outDir: string;
   written: string[];
@@ -256,12 +244,56 @@ async function postJson<T>(endpoint: string, body: unknown): Promise<T> {
 // resolution sub-tabs each request only their own (omitted = all).
 export type ResolutionFamily = "tags" | "recipes";
 
-export function resolvePreview(
+// One mod's own version of a contested recipe id (for the selection cards).
+export interface RecipeVariant {
+  mod: string;
+  content: string; // the recipe JSON, pretty-printed
+}
+
+export interface ResolutionVariants {
+  // colliding recipe id -> each contributing mod's version
+  recipes: Record<string, RecipeVariant[]>;
+}
+
+// Per-conflict winner picks from the selection cards (subject id -> mod id).
+export interface ResolutionWinners {
+  recipeWinners?: Record<string, string>;
+  tagWinners?: Record<string, string>;
+}
+
+function resolveVariants(path: string, version?: string): Promise<ResolutionVariants> {
+  return postJson<ResolutionVariants>("/resolve/variants", { path, version });
+}
+
+// Recipe variants are read from every jar, so memoise them per pack: switching
+// sub-tabs / tabs then re-opens the Recipes cards instantly instead of re-reading.
+const recipeVariantsCache = new Map<string, ResolutionVariants>();
+
+function variantsKey(path: string, version?: string): string {
+  return `${path}|${version ?? ""}`;
+}
+
+/** Synchronously read already-fetched recipe variants for a pack (no flash on remount). */
+export function peekRecipeVariants(path: string, version?: string): ResolutionVariants | undefined {
+  return recipeVariantsCache.get(variantsKey(path, version));
+}
+
+/** Fetch recipe variants, memoised per pack (path + version). */
+export async function loadRecipeVariants(
   path: string,
   version?: string,
-  families?: ResolutionFamily[],
-): Promise<ResolutionPlan> {
-  return postJson<ResolutionPlan>("/resolve/preview", { path, version, families });
+): Promise<ResolutionVariants> {
+  const key = variantsKey(path, version);
+  const hit = recipeVariantsCache.get(key);
+  if (hit) return hit;
+  const variants = await resolveVariants(path, version);
+  recipeVariantsCache.set(key, variants);
+  return variants;
+}
+
+/** Drop the resolution caches — called on a new scan, since the mod set changed. */
+export function clearResolutionCache(): void {
+  recipeVariantsCache.clear();
 }
 
 export function resolveExport(
@@ -269,8 +301,16 @@ export function resolveExport(
   outDir: string,
   version?: string,
   families?: ResolutionFamily[],
+  winners?: ResolutionWinners,
 ): Promise<ExportResult> {
-  return postJson<ExportResult>("/resolve/export", { path, outDir, version, families });
+  return postJson<ExportResult>("/resolve/export", {
+    path,
+    outDir,
+    version,
+    families,
+    recipeWinners: winners?.recipeWinners,
+    tagWinners: winners?.tagWinners,
+  });
 }
 
 export function testSet(path: string, version?: string): Promise<RunVerdict> {

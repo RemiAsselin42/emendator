@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -20,6 +21,7 @@ from app.models import (
     Instance,
     InstanceReport,
     ResolutionPlan,
+    ResolutionVariants,
     ResolveRequest,
     RunRequest,
     RunVerdict,
@@ -27,6 +29,7 @@ from app.models import (
     ScanResult,
     UpdateRequest,
     UpdateResult,
+    VariantsRequest,
     VersionCandidate,
     VersionDetection,
 )
@@ -37,6 +40,7 @@ from app.profile import (
     resolve_profile,
 )
 from app.resolve.generate import build_resolution_plan, export_plan
+from app.resolve.variants import collect_recipe_variants, recipe_winner_bodies
 from app.runner.bisect import bisect_set
 from app.runner.runner import detect_loader, run_set
 from app.sources.discovery import discover_instances
@@ -254,22 +258,66 @@ def runner_bisect(req: RunRequest) -> BisectResult:
     return bisect_set(req, profile)
 
 
+@app.post("/resolve/variants", response_model=ResolutionVariants)
+def resolve_variants(req: VariantsRequest) -> ResolutionVariants:
+    """Per-conflict recipe variants for the selection cards (each mod's version).
+
+    Reads the colliding recipes' JSON from every contributing jar so the front can
+    show what each mod would write; tag variants already ride along in the scan.
+    """
+    folder = _require_dir(req.path)
+    profile, _ = _resolve_for(folder, req.version)
+    return ResolutionVariants(recipes=collect_recipe_variants(folder, profile))
+
+
+def _winner_bodies(
+    folder: Path,
+    profile: VersionProfile,
+    families: Sequence[str] | None,
+    recipe_winners: dict[str, str] | None,
+) -> dict[str, str]:
+    """Winning recipe JSON per id when the recipes family is in scope, else empty."""
+    if families is not None and "recipes" not in families:
+        return {}
+    return recipe_winner_bodies(folder, profile, recipe_winners)
+
+
 @app.post("/resolve/preview", response_model=ResolutionPlan)
 def resolve_preview(req: ResolveRequest) -> ResolutionPlan:
-    """Generate the no-code resolution artifacts for a scanned folder (§10)."""
+    """Generate the no-code resolution artifacts for a scanned folder (§10).
+
+    Honours the per-conflict winner picks: the chosen recipe JSON is read from its
+    jar and the per-tag winner is written into ``unify.json``.
+    """
     folder = _require_dir(req.path)
     profile, _ = _resolve_for(folder, req.version)
     scan = scan_mods_folder(folder, profile.profile)
-    return build_resolution_plan(profile, scan.conflicts, req.mod_priorities, req.families)
+    bodies = _winner_bodies(folder, profile, req.families, req.recipe_winners)
+    return build_resolution_plan(
+        profile,
+        scan.conflicts,
+        req.mod_priorities,
+        req.families,
+        recipe_bodies=bodies,
+        tag_winners=req.tag_winners,
+    )
 
 
 @app.post("/resolve/export", response_model=ExportResult)
 def resolve_export(req: ExportRequest) -> ExportResult:
-    """Write the generated resolution files under ``out_dir``."""
+    """Write the generated resolution files under ``out_dir`` (winner-aware)."""
     folder = _require_dir(req.path)
     profile, _ = _resolve_for(folder, req.version)
     scan = scan_mods_folder(folder, profile.profile)
-    plan = build_resolution_plan(profile, scan.conflicts, req.mod_priorities, req.families)
+    bodies = _winner_bodies(folder, profile, req.families, req.recipe_winners)
+    plan = build_resolution_plan(
+        profile,
+        scan.conflicts,
+        req.mod_priorities,
+        req.families,
+        recipe_bodies=bodies,
+        tag_winners=req.tag_winners,
+    )
     out_dir = Path(req.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     return ExportResult(out_dir=str(out_dir), written=export_plan(plan, out_dir))

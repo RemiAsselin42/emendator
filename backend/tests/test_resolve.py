@@ -1,4 +1,5 @@
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -12,8 +13,17 @@ from app.resolve.generate import (
     generate_recipe_datapack,
     generate_unify_json,
 )
+from app.resolve.variants import collect_recipe_variants, recipe_winner_bodies
 
 PROFILE = get_profile("1.21.1")
+RECIPE_SEGMENT = PROFILE.recipe_path.rstrip("/").split("/")[-1]
+
+
+def _recipe_jar(folder: Path, name: str, mod_id: str, body: dict) -> None:
+    """A minimal jar declaring ``mod_id`` and shipping one ``farmersdelight`` recipe."""
+    with zipfile.ZipFile(folder / name, "w") as zf:
+        zf.writestr("fabric.mod.json", json.dumps({"id": mod_id, "version": "1.0"}))
+        zf.writestr(f"data/farmersdelight/{RECIPE_SEGMENT}/fried_rice.json", json.dumps(body))
 
 
 def _tag_overlap(tag: str, members: list[str]) -> Conflict:
@@ -88,6 +98,45 @@ def test_build_plan_empty_when_no_resolvable_conflicts() -> None:
     )
     assert plan.files == []
     assert "No resolvable conflicts" in plan.summary
+
+
+def test_unify_json_encodes_tag_winners() -> None:
+    file = generate_unify_json(
+        [_tag_overlap("c:crops/tomato", ["croptopia", "farmersdelight"])],
+        ["minecraft", "croptopia", "farmersdelight"],
+        {"c:crops/tomato": "croptopia"},
+    )
+    assert file is not None
+    config = json.loads(file.content)
+    assert config["priorityOverrides"] == {"c:crops/tomato": "croptopia"}
+
+
+def test_recipe_datapack_writes_winning_body() -> None:
+    body = '{"type": "minecraft:crafting_shapeless"}\n'
+    files = generate_recipe_datapack(
+        [_recipe_collision("farmersdelight:cooking/fried_rice", ["a", "b"])],
+        PROFILE,
+        {"farmersdelight:cooking/fried_rice": body},
+    )
+    by_path = {f.path: f.content for f in files}
+    written = f"emendator-overrides/data/farmersdelight/{RECIPE_SEGMENT}/cooking/fried_rice.json"
+    assert by_path[written] == body
+
+
+def test_collect_variants_and_resolve_winner(tmp_path: Path) -> None:
+    _recipe_jar(tmp_path, "amod.jar", "amod", {"result": "A"})
+    _recipe_jar(tmp_path, "bmod.jar", "bmod", {"result": "B"})
+
+    variants = collect_recipe_variants(tmp_path, PROFILE)
+    assert {v.mod for v in variants["farmersdelight:fried_rice"]} == {"amod", "bmod"}
+
+    # No pick → default winner is the first mod id alphabetically (amod).
+    default = recipe_winner_bodies(tmp_path, PROFILE, None)
+    assert '"result": "A"' in default["farmersdelight:fried_rice"]
+
+    # Explicit pick wins.
+    chosen = recipe_winner_bodies(tmp_path, PROFILE, {"farmersdelight:fried_rice": "bmod"})
+    assert '"result": "B"' in chosen["farmersdelight:fried_rice"]
 
 
 def test_export_plan_writes_files(tmp_path: Path) -> None:

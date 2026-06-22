@@ -13,13 +13,13 @@ import type {
   BisectResult,
   Conflict,
   Datapack,
-  ExportResult,
   Loader,
   Mod,
   ModEnvironment,
   RegistryIndex,
   ResolutionFamily,
-  ResolutionPlan,
+  ResolutionVariants,
+  ResolutionWinners,
   ResourcePack,
   RunCause,
   RunVerdict,
@@ -31,8 +31,9 @@ import {
   disableMod,
   enableMod,
   installMod,
+  loadRecipeVariants,
+  peekRecipeVariants,
   resolveExport,
-  resolvePreview,
   updateMod,
 } from "./lib/api";
 import {
@@ -50,7 +51,6 @@ import {
   countBySeverity,
   dependencyRelation,
   groupMixinClusters,
-  groupRecipeCollisions,
   isRecipeCollision,
   isRuntimeConfirmed,
   type MixinCluster,
@@ -232,8 +232,8 @@ export function ConflictsView({
   conflicts: Conflict[];
   verdict: RunVerdict | null;
 }) {
-  // Recipe collisions live in their own Recipes tab (RecipesView); keep them out
-  // of this view so the two never overlap.
+  // Recipe collisions are resolved in Resolution › Recipes; keep them out of this
+  // view so the two never overlap.
   const conflicts = useMemo(
     () => allConflicts.filter((c) => !isRecipeCollision(c)),
     [allConflicts],
@@ -300,51 +300,6 @@ export function ConflictsView({
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-// Recipe-collision browse, shown in the Resolution › Recipes sub-tab: same recipe
-// id written by ≥2 mods, so the loader keeps one and silently drops the rest
-// (detectors.py). Aggregated by the colliding mod set — the unit users act on —
-// with the recipe ids behind expand.
-function RecipesView({ conflicts }: { conflicts: Conflict[] }) {
-  const groups = useMemo(() => groupRecipeCollisions(conflicts), [conflicts]);
-  const total = groups.reduce((n, g) => n + g.recipes.length, 0);
-
-  if (groups.length === 0) {
-    return (
-      <div className="view">
-        <p className="note">No recipe collisions — no two mods write the same recipe id.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="view">
-      <p className="recipes-intro">
-        {total} recipe{total > 1 ? "s" : ""} written by more than one mod — the loader keeps one and
-        silently drops the rest.
-      </p>
-      <div className="conflict-groups">
-        {groups.map((g) => (
-          // A lone pair starts open; otherwise scan the pairs first, expand on demand.
-          <details key={g.key} className="conflict-group" open={groups.length === 1}>
-            <summary className="group-head">
-              <Chevron />
-              <span className="group-name recipe-pair">{g.members.join(" ↔ ")}</span>
-              <span className="group-count">· {g.recipes.length}</span>
-            </summary>
-            <ul className="recipe-list">
-              {g.recipes.map((r) => (
-                <li className="recipe-id" key={r}>
-                  {r}
-                </li>
-              ))}
-            </ul>
-          </details>
-        ))}
-      </div>
     </div>
   );
 }
@@ -783,43 +738,155 @@ interface ModWindow {
   end: number;
 }
 
-// Pure windowing math: the cumulative top offset of every card (from the measured
-// or estimated heights), the total scroll height, and the [start, end) slice of
-// entries intersecting the viewport plus overscan. Recomputed every render (heights
-// is a mutable ref a measure pass mutates), so it's kept pure and out of the body.
+// Pure windowing math: the cumulative top offset of every row (from the measured
+// or estimated heights, keyed), the total scroll height, and the [start, end) slice
+// intersecting the viewport plus overscan. Recomputed every render (heights is a
+// mutable ref a measure pass mutates), so it's kept pure and out of the body.
 function computeWindow(
-  entries: ModListEntry[],
+  keys: string[],
   heights: Map<string, number>,
   scrollTop: number,
   viewportH: number,
+  estimate: number,
 ): ModWindow {
-  const tops = new Array<number>(entries.length);
+  const tops = new Array<number>(keys.length);
   let acc = 0;
-  for (let i = 0; i < entries.length; i++) {
+  for (let i = 0; i < keys.length; i++) {
     tops[i] = acc;
-    acc += (heights.get(entries[i].jar) ?? CARD_ESTIMATE) + CARD_GAP;
+    acc += (heights.get(keys[i]) ?? estimate) + CARD_GAP;
   }
-  const totalH = entries.length > 0 ? acc - CARD_GAP : 0;
+  const totalH = keys.length > 0 ? acc - CARD_GAP : 0;
 
   const bottom = scrollTop + viewportH;
   let start = 0;
-  while (start < entries.length) {
-    const h = heights.get(entries[start].jar) ?? CARD_ESTIMATE;
+  while (start < keys.length) {
+    const h = heights.get(keys[start]) ?? estimate;
     if (tops[start] + h >= scrollTop) break;
     start++;
   }
   let end = start;
-  while (end < entries.length && tops[end] <= bottom) end++;
+  while (end < keys.length && tops[end] <= bottom) end++;
   start = Math.max(0, start - OVERSCAN);
-  end = Math.min(entries.length, end + OVERSCAN);
+  end = Math.min(keys.length, end + OVERSCAN);
 
   return { tops, totalH, start, end };
 }
 
-// Windowed mod list: only the cards intersecting the viewport (plus a small
-// overscan) live in the DOM. Heights are variable (depends/provides differ per
-// mod), so each rendered card is measured and its height cached by jar; offsets
-// are recomputed from the cache. Keeps the DOM tiny for large modpacks.
+// Generic windowed list: only the rows intersecting the viewport (plus a small
+// overscan) live in the DOM. Heights are variable, so each rendered row is measured
+// and cached by key; offsets are recomputed from the cache. Drives both the mod
+// list and the resolution selection cards.
+function VirtualList<T>({
+  items,
+  keyOf,
+  estimate,
+  renderItem,
+  scrollRef,
+  className = "mods-list",
+}: {
+  items: T[];
+  keyOf: (item: T) => string;
+  estimate: number;
+  renderItem: (item: T) => ReactNode;
+  scrollRef?: RefObject<HTMLDivElement | null>;
+  className?: string;
+}) {
+  // Internal ref drives the virtualization (scroll/measure); scrollRef mirrors the
+  // same element so a parent can scroll the list to top.
+  const listRef = useRef<HTMLDivElement>(null);
+  const heights = useRef<Map<string, number>>(new Map());
+  const nodes = useRef<Map<string, HTMLDivElement>>(new Map());
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(0);
+  const [, bump] = useReducer((n: number) => n + 1, 0);
+
+  const setNode = useCallback(
+    (key: string) => (el: HTMLDivElement | null) => {
+      if (el) nodes.current.set(key, el);
+      else nodes.current.delete(key);
+    },
+    [],
+  );
+
+  // Track the scroll position and the visible height of the scroll container.
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const onScroll = () => setScrollTop(el.scrollTop);
+    // A width change can reflow rows, so drop measurements and let the layout
+    // effect below re-measure at the new width.
+    const ro = new ResizeObserver(() => {
+      setViewportH(el.clientHeight);
+      heights.current.clear();
+      bump();
+    });
+    setViewportH(el.clientHeight);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      ro.disconnect();
+    };
+  }, []);
+
+  // After each render, measure the rows currently in the DOM. If a real height
+  // differs from the cache, store it and re-render so offsets settle (converges in
+  // a pass or two; offsetHeight is integral, so it stops changing).
+  useLayoutEffect(() => {
+    let changed = false;
+    for (const [key, el] of nodes.current) {
+      const h = el.offsetHeight;
+      if (h > 0 && heights.current.get(key) !== h) {
+        heights.current.set(key, h);
+        changed = true;
+      }
+    }
+    if (changed) bump();
+  });
+
+  // Recomputed every render (not memoized): heights is a mutable ref, so a measure
+  // pass that calls bump() must recompute offsets with the same `items`.
+  const keys = items.map(keyOf);
+  const { tops, totalH, start, end } = computeWindow(
+    keys,
+    heights.current,
+    scrollTop,
+    viewportH,
+    estimate,
+  );
+
+  const windowItems = items.slice(start, end);
+
+  return (
+    <div
+      ref={(el) => {
+        listRef.current = el;
+        if (scrollRef) scrollRef.current = el;
+      }}
+      className={className}
+    >
+      <div className="mods-virt" style={{ height: totalH }}>
+        {windowItems.map((item, i) => {
+          const index = start + i;
+          const key = keys[index];
+          return (
+            <div
+              key={key}
+              ref={setNode(key)}
+              className="mods-virt-item"
+              style={{ transform: `translateY(${tops[index]}px)` }}
+            >
+              {renderItem(item)}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Windowed mod list: a thin wrapper that renders a mod card or an unreadable-jar
+// card per entry, keyed by jar name.
 function VirtualModList({
   entries,
   scrollRef,
@@ -835,104 +902,26 @@ function VirtualModList({
   updatedJars: Set<string>;
   onUpdated: (jar: string) => void;
 }) {
-  // Internal ref drives the virtualization (scroll/measure); scrollRef mirrors
-  // the same element so the parent (Overview stats) can scroll the list to top.
-  const listRef = useRef<HTMLDivElement>(null);
-  const heights = useRef<Map<string, number>>(new Map());
-  const nodes = useRef<Map<string, HTMLDivElement>>(new Map());
-  const [scrollTop, setScrollTop] = useState(0);
-  const [viewportH, setViewportH] = useState(0);
-  const [, bump] = useReducer((n: number) => n + 1, 0);
-
-  const setNode = useCallback(
-    (jar: string) => (el: HTMLDivElement | null) => {
-      if (el) nodes.current.set(jar, el);
-      else nodes.current.delete(jar);
-    },
-    [],
-  );
-
-  // Track the scroll position and the visible height of the scroll container.
-  useLayoutEffect(() => {
-    const el = listRef.current;
-    if (!el) return;
-    const onScroll = () => setScrollTop(el.scrollTop);
-    // A width change can reflow cards (tags wrap), so drop measurements and let
-    // the layout effect below re-measure at the new width.
-    const ro = new ResizeObserver(() => {
-      setViewportH(el.clientHeight);
-      heights.current.clear();
-      bump();
-    });
-    setViewportH(el.clientHeight);
-    el.addEventListener("scroll", onScroll, { passive: true });
-    ro.observe(el);
-    return () => {
-      el.removeEventListener("scroll", onScroll);
-      ro.disconnect();
-    };
-  }, []);
-
-  // After each render, measure the cards currently in the DOM. If a real height
-  // differs from the cache, store it and re-render so offsets settle (converges
-  // in a pass or two; offsetHeight is integral, so it stops changing).
-  useLayoutEffect(() => {
-    let changed = false;
-    for (const [jar, el] of nodes.current) {
-      const h = el.offsetHeight;
-      if (h > 0 && heights.current.get(jar) !== h) {
-        heights.current.set(jar, h);
-        changed = true;
-      }
-    }
-    if (changed) bump();
-  });
-
-  // Recomputed every render (not memoized): heights is a mutable ref, so a measure
-  // pass that calls bump() must recompute offsets with the same `entries`.
-  const { tops, totalH, start, end } = computeWindow(
-    entries,
-    heights.current,
-    scrollTop,
-    viewportH,
-  );
-
-  const window = entries.slice(start, end);
-
   return (
-    <div
-      ref={(el) => {
-        listRef.current = el;
-        scrollRef.current = el;
-      }}
-      className="mods-list"
-    >
-      <div className="mods-virt" style={{ height: totalH }}>
-        {window.map((entry, i) => {
-          const index = start + i;
-          return (
-            <div
-              key={entry.jar}
-              ref={setNode(entry.jar)}
-              className="mods-virt-item"
-              style={{ transform: `translateY(${tops[index]}px)` }}
-            >
-              {entry.kind === "mod" ? (
-                <ModCard
-                  mod={entry.mod}
-                  modsPath={modsPath}
-                  version={version}
-                  alreadyUpdated={updatedJars.has(entry.jar)}
-                  onUpdated={onUpdated}
-                />
-              ) : (
-                <ErrorCard name={entry.name} jar={entry.jar} reason={entry.reason} />
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
+    <VirtualList
+      items={entries}
+      keyOf={(e) => e.jar}
+      estimate={CARD_ESTIMATE}
+      scrollRef={scrollRef}
+      renderItem={(entry) =>
+        entry.kind === "mod" ? (
+          <ModCard
+            mod={entry.mod}
+            modsPath={modsPath}
+            version={version}
+            alreadyUpdated={updatedJars.has(entry.jar)}
+            onUpdated={onUpdated}
+          />
+        ) : (
+          <ErrorCard name={entry.name} jar={entry.jar} reason={entry.reason} />
+        )
+      }
+    />
   );
 }
 
@@ -1948,45 +1937,48 @@ function MixinResolver({
 // Shared generate → preview → export flow for one conflict family (Tags emits
 // unify.json; Recipes emits the override datapack). Parametrised so both sub-tabs
 // drive the same /resolve endpoints with a `families` filter.
+// The modpack's base folder, used to prefill the output path: strip a trailing
+// `mods` segment from the scanned mods folder (the generated config/datapack live
+// at the pack root). Falls back to the mods path when it isn't a `mods` folder.
+function packRoot(modsPath: string): string {
+  return modsPath.replace(/[/\\]mods[/\\]?$/i, "") || modsPath;
+}
+
+// One merged action: write the family's resolution files straight into the given
+// folder (prefilled with the pack root), honouring the winner picks. No preview —
+// generate and place in a single click.
 function ConfigGenerator({
   modsPath,
   version,
   family,
   generateLabel,
+  winners,
 }: {
   modsPath: string;
   version?: string;
   family: ResolutionFamily;
   generateLabel: string;
+  winners?: ResolutionWinners;
 }) {
-  const [plan, setPlan] = useState<ResolutionPlan | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [outDir, setOutDir] = useState("");
+  const [outDir, setOutDir] = useState(() => packRoot(modsPath));
   const [exporting, setExporting] = useState(false);
-  const [exported, setExported] = useState<ExportResult | null>(null);
+  // After a successful write the button reads "Done" for a beat, then reverts.
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const doneTimer = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => window.clearTimeout(doneTimer.current), []);
 
   const generate = async () => {
-    setLoading(true);
-    setError(null);
-    setExported(null);
-    try {
-      setPlan(await resolvePreview(modsPath, version, [family]));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setPlan(null);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const doExport = async () => {
     const dir = outDir.trim();
     if (!dir) return;
     setExporting(true);
     setError(null);
     try {
-      setExported(await resolveExport(modsPath, dir, version, [family]));
+      await resolveExport(modsPath, dir, version, [family], winners);
+      setDone(true);
+      window.clearTimeout(doneTimer.current);
+      doneTimer.current = window.setTimeout(() => setDone(false), 3000);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1997,147 +1989,313 @@ function ConfigGenerator({
   return (
     <>
       <section className="runner">
+        <input
+          className="path-input"
+          type="text"
+          placeholder="output folder (your pack root)"
+          value={outDir}
+          onChange={(e) => setOutDir(e.target.value)}
+          spellCheck={false}
+        />
         <button
           className="btn-primary"
           type="button"
           onClick={() => void generate()}
-          disabled={loading}
+          disabled={exporting || done || !outDir.trim()}
         >
-          {loading ? "generating…" : generateLabel}
+          {exporting ? "Generating…" : done ? "Done" : generateLabel}
         </button>
       </section>
 
       {error && <p className="scan-error">{error}</p>}
-
-      {plan && (
-        <>
-          <p className="note">{plan.summary}</p>
-          {plan.files.map((file) => (
-            <div className="panel" key={file.path}>
-              <p className="note">{file.path}</p>
-              <pre className="log">{file.content}</pre>
-            </div>
-          ))}
-
-          {plan.files.length > 0 && (
-            <>
-              <section className="runner">
-                <input
-                  className="path-input"
-                  type="text"
-                  placeholder="output folder (e.g. your pack root)"
-                  value={outDir}
-                  onChange={(e) => setOutDir(e.target.value)}
-                  spellCheck={false}
-                />
-                <button
-                  className="btn-primary"
-                  type="button"
-                  onClick={() => void doExport()}
-                  disabled={exporting || !outDir.trim()}
-                >
-                  {exporting ? "exporting…" : "Export files"}
-                </button>
-              </section>
-              {exported && (
-                <p className="note">
-                  wrote {exported.written.length} file(s) to {exported.outDir}
-                </p>
-              )}
-            </>
-          )}
-        </>
-      )}
     </>
   );
 }
 
-// Browse the conventional-tag overlaps (≥2 mods feeding the same `c:`/`forge:`
-// tag), each expanding to the per-mod item contributions.
-function TagsBrowse({ conflicts }: { conflicts: Conflict[] }) {
-  if (conflicts.length === 0) {
-    return (
-      <p className="note">No tag overlaps — no conventional tag is fed by more than one mod.</p>
-    );
+// --- Selection cards: pick the winner per conflict (recipe / tag) -------------
+
+interface SelectionVariant {
+  mod: string;
+  detail: string; // recipe: a short "type → result" summary; tag: the items it feeds
+  content?: string; // recipe: the full JSON, behind an expand
+}
+
+interface SelectionConflict {
+  id: string; // subject id — the selection key and React key
+  defaultMod: string; // Emendator's default winner (first mod alphabetically)
+  variants: SelectionVariant[];
+}
+
+// The default winner mirrors the backend: first mod id alphabetically among the
+// conflict's contributors. Picking nothing keeps this.
+function defaultWinner(mods: string[]): string {
+  return [...mods].sort()[0] ?? "";
+}
+
+function capitalize(s: string): string {
+  return s ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
+// Humanise a recipe/tag id for display only (the raw id stays the selection key):
+// `farmersdelight:cooking/fried_rice` -> `Farmersdelight: Cooking/Fried rice`.
+function prettySubject(id: string): string {
+  const [namespace, ...rest] = id.split(":");
+  const path = rest.join(":");
+  if (!path) return capitalize(namespace);
+  const prettyPath = path
+    .split("/")
+    .map((seg) => capitalize(seg.replace(/_/g, " ")))
+    .join("/");
+  return `${capitalize(namespace)}: ${prettyPath}`;
+}
+
+// A compact "type → result" line from a recipe JSON, best-effort.
+function summarizeRecipe(content: string): string {
+  try {
+    const json = JSON.parse(content) as Record<string, unknown>;
+    const type = typeof json.type === "string" ? json.type.replace(/^minecraft:/, "") : "recipe";
+    const result = json.result;
+    let item = "";
+    if (typeof result === "string") item = result;
+    else if (result && typeof result === "object") {
+      const r = result as Record<string, unknown>;
+      item = String(r.id ?? r.item ?? "");
+    }
+    return item ? `${type} → ${item}` : type;
+  } catch {
+    return "recipe";
   }
+}
+
+function recipeSelections(variants: ResolutionVariants): SelectionConflict[] {
+  return Object.entries(variants.recipes)
+    .map(([id, vs]) => ({
+      id,
+      defaultMod: defaultWinner(vs.map((v) => v.mod)),
+      variants: vs.map((v) => ({
+        mod: v.mod,
+        detail: summarizeRecipe(v.content),
+        content: v.content,
+      })),
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function tagSelections(conflicts: Conflict[]): SelectionConflict[] {
+  return conflicts
+    .filter((c) => c.type === "tag_overlap")
+    .map((c) => {
+      const byMod = conflictByMod(c);
+      const mods = Object.keys(byMod).sort();
+      return {
+        id: conflictSubject(c),
+        defaultMod: defaultWinner(mods),
+        variants: mods.map((mod) => ({ mod, detail: byMod[mod].join(", ") })),
+      };
+    })
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function VariantButton({
+  variant,
+  selected,
+  onPick,
+}: {
+  variant: SelectionVariant;
+  selected: boolean;
+  onPick: () => void;
+}) {
   return (
-    <>
-      <p className="note">
-        {conflicts.length} conventional tag{conflicts.length > 1 ? "s" : ""} fed by more than one
-        mod — duplicate content; unify picks one canonical item per tag.
-      </p>
-      <div className="conflict-groups">
-        {conflicts.map((c) => {
-          const n = conflictItems(c).length;
-          return (
-            <details key={conflictKey(c)} className="conflict-group">
-              <summary className="group-head">
-                <Chevron />
-                <span className="group-name recipe-pair">{conflictSubject(c)}</span>
-                <span className="group-count">
-                  · {c.members.length} mods · {n} item{n > 1 ? "s" : ""}
-                </span>
-              </summary>
-              <dl className="bymod">
-                {Object.entries(conflictByMod(c)).map(([mod, items]) => (
-                  <div className="bymod-row" key={mod}>
-                    <dt>{mod}</dt>
-                    <dd>{items.join(", ")}</dd>
-                  </div>
-                ))}
-              </dl>
-            </details>
-          );
-        })}
-      </div>
-    </>
+    <div className={selected ? "sel-variant sel-variant-on" : "sel-variant"}>
+      <button type="button" className="sel-variant-pick" onClick={onPick} aria-pressed={selected}>
+        <span className="sel-variant-mod">{variant.mod}</span>
+        {variant.detail && <span className="sel-variant-detail">{variant.detail}</span>}
+      </button>
+    </div>
   );
 }
 
-// Recipes sub-tab: browse the collisions, then generate the override datapack.
+// One conflict, two columns: the default winner on the left, the other variants on
+// the right. The selected variant (current winner, default until changed) is lit.
+function SelectionCard({
+  conflict,
+  winner,
+  onPick,
+}: {
+  conflict: SelectionConflict;
+  winner: string;
+  onPick: (mod: string) => void;
+}) {
+  const def = conflict.variants.find((v) => v.mod === conflict.defaultMod);
+  const others = conflict.variants.filter((v) => v.mod !== conflict.defaultMod);
+  return (
+    <article className="sel-card">
+      <header className="sel-card-head">
+        <span className="sel-subject" title={conflict.id}>
+          {prettySubject(conflict.id)}
+        </span>
+        <span className="sel-count">{conflict.variants.length} variants</span>
+      </header>
+      <div className="sel-cols">
+        <div className="sel-col">
+          <span className="sel-col-label">By default</span>
+          {def && (
+            <VariantButton
+              variant={def}
+              selected={winner === def.mod}
+              onPick={() => onPick(def.mod)}
+            />
+          )}
+        </div>
+        <div className="sel-col">
+          <span className="sel-col-label">Other</span>
+          {others.length === 0 ? (
+            <span className="note">—</span>
+          ) : (
+            others.map((v) => (
+              <VariantButton
+                key={v.mod}
+                variant={v}
+                selected={winner === v.mod}
+                onPick={() => onPick(v.mod)}
+              />
+            ))
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+const SELECTION_CARD_ESTIMATE = 160;
+
+// The virtualized stack of selection cards (DOM-limited, like the mod list).
+function SelectionCards({
+  conflicts,
+  winners,
+  onPick,
+}: {
+  conflicts: SelectionConflict[];
+  winners: Record<string, string>;
+  onPick: (id: string, mod: string) => void;
+}) {
+  return (
+    <VirtualList
+      items={conflicts}
+      keyOf={(c) => c.id}
+      estimate={SELECTION_CARD_ESTIMATE}
+      className="sel-list"
+      renderItem={(c) => (
+        <SelectionCard
+          conflict={c}
+          winner={winners[c.id] ?? c.defaultMod}
+          onPick={(mod) => onPick(c.id, mod)}
+        />
+      )}
+    />
+  );
+}
+
+// Recipes sub-tab: a selection card per colliding recipe id (each mod's version
+// fetched from its jar), then the winner-driven override datapack.
 function RecipesResolution({
   conflicts,
   modsPath,
   version,
+  winners,
+  onPick,
 }: {
   conflicts: Conflict[];
   modsPath: string;
   version?: string;
+  winners: Record<string, string>;
+  onPick: (id: string, mod: string) => void;
 }) {
+  const hasCollisions = conflicts.some((c) => c.type === "recipe_collision");
+  // Seed from the per-pack cache so re-opening the tab is instant (no "reading…").
+  const [variants, setVariants] = useState<ResolutionVariants | null>(
+    () => peekRecipeVariants(modsPath, version) ?? null,
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!hasCollisions) return;
+    const cached = peekRecipeVariants(modsPath, version);
+    if (cached) {
+      setVariants(cached);
+      return;
+    }
+    let active = true;
+    setVariants(null);
+    setError(null);
+    loadRecipeVariants(modsPath, version)
+      .then((v) => active && setVariants(v))
+      .catch((e) => active && setError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      active = false;
+    };
+  }, [modsPath, version, hasCollisions]);
+
+  const selections = useMemo(() => (variants ? recipeSelections(variants) : []), [variants]);
+
+  if (!hasCollisions) {
+    return <p className="note">No recipe collisions — no two mods write the same recipe id.</p>;
+  }
+
   return (
     <>
-      <RecipesView conflicts={conflicts} />
-      <h2 className="resolution-section">Override datapack</h2>
+      <h2 className="resolution-section">Choose the correct recipe</h2>
+
+      {error && <p className="scan-error">{error}</p>}
+      {variants === null && !error && <p className="note">reading recipes…</p>}
+      {selections.length > 0 && (
+        <SelectionCards conflicts={selections} winners={winners} onPick={onPick} />
+      )}
       <ConfigGenerator
         modsPath={modsPath}
         version={version}
         family="recipes"
         generateLabel="Generate recipe datapack"
+        winners={{ recipeWinners: winners }}
       />
     </>
   );
 }
 
-// Tags sub-tab: browse the tag overlaps, then generate the Almost Unified config.
+// Tags sub-tab: a selection card per conventional-tag overlap (each mod's items),
+// then the per-tag Almost Unified config.
 function TagsResolution({
   conflicts,
   modsPath,
   version,
+  winners,
+  onPick,
 }: {
   conflicts: Conflict[];
   modsPath: string;
   version?: string;
+  winners: Record<string, string>;
+  onPick: (id: string, mod: string) => void;
 }) {
-  const tagOverlaps = conflicts.filter((c) => c.type === "tag_overlap");
+  const selections = useMemo(() => tagSelections(conflicts), [conflicts]);
+
+  if (selections.length === 0) {
+    return (
+      <p className="note">No tag overlaps — no conventional tag is fed by more than one mod.</p>
+    );
+  }
+
   return (
     <>
-      <TagsBrowse conflicts={tagOverlaps} />
-      <h2 className="resolution-section">unify.json</h2>
+      <h2 className="resolution-section">Choose the correct tag</h2>
+
+      <SelectionCards conflicts={selections} winners={winners} onPick={onPick} />
       <ConfigGenerator
         modsPath={modsPath}
         version={version}
         family="tags"
         generateLabel="Generate unify.json"
+        winners={{ tagWinners: winners }}
       />
     </>
   );
@@ -2232,6 +2390,18 @@ export function ResolutionView({
     () => groupMixinClusters(conflicts, mods, mixinExports),
     [conflicts, mods, mixinExports],
   );
+  // Per-conflict winner picks (subject id -> mod). Held here so they survive
+  // sub-tab switches; seeded lazily (an absent pick means "the default").
+  const [recipeWinners, setRecipeWinners] = useState<Record<string, string>>({});
+  const [tagWinners, setTagWinners] = useState<Record<string, string>>({});
+  const pickRecipe = useCallback(
+    (id: string, mod: string) => setRecipeWinners((w) => ({ ...w, [id]: mod })),
+    [],
+  );
+  const pickTag = useCallback(
+    (id: string, mod: string) => setTagWinners((w) => ({ ...w, [id]: mod })),
+    [],
+  );
 
   return (
     <div className="view">
@@ -2269,11 +2439,23 @@ export function ResolutionView({
         ))}
 
       {sub === "recipes" && (
-        <RecipesResolution conflicts={conflicts} modsPath={modsPath} version={version} />
+        <RecipesResolution
+          conflicts={conflicts}
+          modsPath={modsPath}
+          version={version}
+          winners={recipeWinners}
+          onPick={pickRecipe}
+        />
       )}
 
       {sub === "tags" && (
-        <TagsResolution conflicts={conflicts} modsPath={modsPath} version={version} />
+        <TagsResolution
+          conflicts={conflicts}
+          modsPath={modsPath}
+          version={version}
+          winners={tagWinners}
+          onPick={pickTag}
+        />
       )}
 
       {sub === "deps" && (
