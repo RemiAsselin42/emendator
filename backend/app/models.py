@@ -257,6 +257,11 @@ class ResolveRequest(CamelModel):
     # Restrict generation to these families (None = all). Lets the Tags and
     # Recipes sub-tabs each preview only their own artifact.
     families: list[ResolutionFamily] | None = None
+    # Per-conflict winner picks from the selection cards (subject id -> mod id):
+    # which mod's recipe wins a collision, which mod's item wins a tag. Absent
+    # subjects fall back to the default (priority order).
+    recipe_winners: dict[str, str] | None = None
+    tag_winners: dict[str, str] | None = None
 
 
 class ExportRequest(CamelModel):
@@ -267,6 +272,33 @@ class ExportRequest(CamelModel):
     version: str | None = None
     mod_priorities: list[str] | None = None
     families: list[ResolutionFamily] | None = None
+    recipe_winners: dict[str, str] | None = None
+    tag_winners: dict[str, str] | None = None
+
+
+class RecipeVariant(CamelModel):
+    """One mod's own version of a contested recipe id (for the selection card)."""
+
+    mod: str
+    content: str  # the recipe JSON, pretty-printed, as the user would drop it in
+
+
+class VariantsRequest(CamelModel):
+    """Body of ``POST /resolve/variants``: the scanned ``mods/`` folder."""
+
+    path: str
+    version: str | None = None
+
+
+class ResolutionVariants(CamelModel):
+    """Per-conflict variants the user chooses between in the Resolution cards.
+
+    ``recipes`` maps a colliding recipe id to each mod's version of it; tag
+    variants already ride along in the scan's ``tag_overlap`` detail, so they are
+    not duplicated here.
+    """
+
+    recipes: dict[str, list[RecipeVariant]] = {}
 
 
 class ExportResult(CamelModel):

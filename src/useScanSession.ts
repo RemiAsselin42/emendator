@@ -3,6 +3,7 @@ import {
   AmbiguousVersionError,
   type BisectResult,
   bisectSet,
+  clearResolutionCache,
   detectInstance,
   discoverInstances,
   fetchHealth,
@@ -311,6 +312,7 @@ export function useScanSession() {
       if (!trimmed) return;
       dispatch({ type: "start" });
       resetRunner();
+      clearResolutionCache(); // the mod set is changing — drop cached recipe variants
       // Best-effort, in parallel: never blocks or fails the scan, just feeds the
       // header badge (pack name, source, loader, content counts).
       void detectInstance(trimmed)

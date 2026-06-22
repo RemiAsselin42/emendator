@@ -12,6 +12,7 @@ All functions are pure (conflicts -> file artifacts); writing to disk is
 
 import json
 from pathlib import Path
+from typing import Any
 
 from app.models import Conflict, GeneratedFile, ResolutionFamily, ResolutionPlan
 from app.profile import VersionProfile
@@ -27,13 +28,23 @@ def _unify_default_priorities(tag_overlaps: list[Conflict]) -> list[str]:
 
 
 def generate_unify_json(
-    tag_overlaps: list[Conflict], mod_priorities: list[str]
+    tag_overlaps: list[Conflict],
+    mod_priorities: list[str],
+    tag_winners: dict[str, str] | None = None,
 ) -> GeneratedFile | None:
-    """Almost Unified config unifying the overlapping ``c:`` tags."""
+    """Almost Unified config unifying the overlapping ``c:`` tags.
+
+    ``tag_winners`` (tag id -> winning mod) records the per-tag canonical pick from
+    the selection cards as a ``priorityOverrides`` map; tags left unset fall back to
+    the global ``modPriorities`` order.
+    """
     if not tag_overlaps:
         return None
     tags = sorted({str(c.detail["tag"]) for c in tag_overlaps if c.detail.get("tag")})
-    config = {"modPriorities": mod_priorities, "tags": tags}
+    config: dict[str, Any] = {"modPriorities": mod_priorities, "tags": tags}
+    overrides = {tag: tag_winners[tag] for tag in tags if tag_winners and tag in tag_winners}
+    if overrides:
+        config["priorityOverrides"] = overrides
     return GeneratedFile(path=UNIFY_PATH, content=json.dumps(config, indent=2) + "\n")
 
 
@@ -43,12 +54,20 @@ def _recipe_segment(profile: VersionProfile) -> str:
 
 
 def generate_recipe_datapack(
-    recipe_collisions: list[Conflict], profile: VersionProfile
+    recipe_collisions: list[Conflict],
+    profile: VersionProfile,
+    recipe_bodies: dict[str, str] | None = None,
 ) -> list[GeneratedFile]:
-    """A datapack scaffold (``pack.mcmeta`` + manifest) for recipe collisions."""
+    """An override datapack for recipe collisions.
+
+    Always emits ``pack.mcmeta`` + a README manifest. When ``recipe_bodies`` (recipe
+    id -> winning JSON, from the chosen variant) is given, it also writes each
+    winning recipe at its data path so the pack is functional, not a scaffold.
+    """
     if not recipe_collisions:
         return []
 
+    bodies = recipe_bodies or {}
     mcmeta = {
         "pack": {
             "pack_format": profile.datapack_format,
@@ -59,24 +78,28 @@ def generate_recipe_datapack(
     lines = [
         "# Recipe override datapack",
         "",
-        "Each recipe id below is defined by more than one mod; the datapack with",
-        "the highest priority wins. Drop the winning recipe JSON at the listed",
-        "path to override the others.",
+        "Each recipe id below is defined by more than one mod; this datapack loads",
+        "last and wins. The winning recipe JSON is written at the listed path when a",
+        "winner is chosen; otherwise drop the one you want in yourself.",
         "",
+    ]
+    files: list[GeneratedFile] = [
+        GeneratedFile(
+            path=f"{DATAPACK_ROOT}/pack.mcmeta", content=json.dumps(mcmeta, indent=2) + "\n"
+        )
     ]
     for conflict in sorted(recipe_collisions, key=lambda c: str(c.detail.get("recipe", ""))):
         recipe_id = str(conflict.detail.get("recipe", ""))
         namespace, _, rel = recipe_id.partition(":")
+        rel_path = f"data/{namespace}/{segment}/{rel}.json"
         members = ", ".join(conflict.members)
-        lines.append(f"- `{recipe_id}` (from {members}) -> data/{namespace}/{segment}/{rel}.json")
+        lines.append(f"- `{recipe_id}` (from {members}) -> {rel_path}")
+        body = bodies.get(recipe_id)
+        if body:
+            files.append(GeneratedFile(path=f"{DATAPACK_ROOT}/{rel_path}", content=body))
 
-    return [
-        GeneratedFile(
-            path=f"{DATAPACK_ROOT}/pack.mcmeta",
-            content=json.dumps(mcmeta, indent=2) + "\n",
-        ),
-        GeneratedFile(path=f"{DATAPACK_ROOT}/README.md", content="\n".join(lines) + "\n"),
-    ]
+    files.append(GeneratedFile(path=f"{DATAPACK_ROOT}/README.md", content="\n".join(lines) + "\n"))
+    return files
 
 
 def build_resolution_plan(
@@ -84,8 +107,16 @@ def build_resolution_plan(
     conflicts: list[Conflict],
     mod_priorities: list[str] | None = None,
     families: list[ResolutionFamily] | None = None,
+    *,
+    recipe_bodies: dict[str, str] | None = None,
+    tag_winners: dict[str, str] | None = None,
 ) -> ResolutionPlan:
-    """Assemble the resolution artifacts for the requested families (default: all)."""
+    """Assemble the resolution artifacts for the requested families (default: all).
+
+    ``recipe_bodies`` (winning recipe JSON per id) and ``tag_winners`` carry the
+    per-conflict picks from the selection cards; without them the plan keeps its
+    priority-order defaults.
+    """
     want = set(families) if families is not None else {"tags", "recipes"}
     tag_overlaps = [c for c in conflicts if c.type == "tag_overlap"] if "tags" in want else []
     recipe_collisions = (
@@ -94,10 +125,10 @@ def build_resolution_plan(
     priorities = mod_priorities or _unify_default_priorities(tag_overlaps)
 
     files: list[GeneratedFile] = []
-    unify = generate_unify_json(tag_overlaps, priorities)
+    unify = generate_unify_json(tag_overlaps, priorities, tag_winners)
     if unify is not None:
         files.append(unify)
-    files.extend(generate_recipe_datapack(recipe_collisions, profile))
+    files.extend(generate_recipe_datapack(recipe_collisions, profile, recipe_bodies))
 
     if files:
         summary = (

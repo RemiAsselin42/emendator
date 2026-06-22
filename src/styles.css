@@ -26,22 +26,29 @@
 
 * {
   box-sizing: border-box;
-  scrollbar-gutter: stable;
   font-optical-sizing: auto;
 }
 
 /* WebKit/Blink: transparent track, gold thumb, no arrow buttons. */
 *::-webkit-scrollbar {
-  width: 8px;
+  width: calc(var(--space-sm) * 2 + 6px);
+  height: calc(var(--space-sm) * 2 + 6px);
 }
 
 *::-webkit-scrollbar-track {
   background: transparent;
 }
 
+/* Transparent border (clipped to padding-box) insets the accent thumb, leaving a
+   --space-sm gap between content and thumb. The gap lives on the scrollbar, so it
+   only exists when the scrollbar does — unlike a per-region padding-right, which
+   lingered and shifted content when the region didn't overflow. */
 *::-webkit-scrollbar-thumb {
-  background: var(--color-primary);
+  background-color: var(--color-primary);
   border-radius: var(--radius);
+  border-left: var(--space-md) solid transparent;
+  background-clip: padding-box;
+  cursor: grabbing;
 }
 
 *::-webkit-scrollbar-button {
@@ -53,12 +60,16 @@ body {
   margin: 0;
 }
 
+html > .root {
+  scrollbar-gutter: stable;
+}
+
 body {
   background: var(--color-background);
   color: var(--color-text);
   font-family: var(--font-body);
   font-optical-sizing: auto;
-  font-size: 1rem; /* 16px floor — RGAA, see DESIGN.md */
+  font-size: 1rem;
 }
 
 h1,
@@ -446,7 +457,6 @@ a:hover {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding-right: var(--space-sm);
 }
 
 .mods-virt {
@@ -771,6 +781,8 @@ a:hover {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: var(--space-md);
   margin-top: var(--space-sm);
+  max-height: calc(100vh - 36em);
+  overflow: auto;
 }
 
 .quick-card {
@@ -1226,7 +1238,7 @@ a:hover {
 /* Section divider between the mixin resolver and the generated-config block. */
 .resolution-section {
   font-size: 1.25rem;
-  margin: var(--space-md) 0 0;
+  margin: 0;
 }
 
 .mixin-cluster-body {
@@ -1288,4 +1300,109 @@ a:hover {
   margin-top: var(--space-sm);
   align-self: flex-start;
   padding: 4px var(--space-sm);
+}
+
+/* --- Resolution selection cards (Recipes / Tags) ------------------------- */
+/* Bounded, virtualized scroll region (reuses .mods-virt / .mods-virt-item). */
+.sel-list {
+  max-height: calc(100dvh - 26rem);
+  min-height: 200px;
+  overflow-y: auto;
+}
+
+.sel-card {
+  width: 100%;
+  border: var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.sel-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.sel-subject {
+  font-family: var(--font-body);
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.sel-count {
+  opacity: 0.5;
+}
+
+/* Two columns: the default winner, and the other variants to override with. */
+.sel-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+}
+
+.sel-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.sel-col-label {
+  font-weight: 500;
+  opacity: 0.6;
+}
+
+/* A variant = a bordered cell holding a full-width pick button (+ optional JSON).
+   The picked one (winner) is lit with the accent. */
+.sel-variant {
+  border: var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-sm);
+  background-color: var(--color-background);
+  transition: var(--transition, all 0.3s ease);
+}
+
+.sel-variant:hover {
+  border-color: var(--color-secondary);
+}
+
+.sel-variant-on {
+  border-color: var(--color-primary);
+}
+
+.sel-variant-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-text);
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+
+.sel-variant-mod {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.sel-variant-detail {
+  opacity: 0.7;
+  word-break: break-word;
+}
+
+.sel-variant-json {
+  margin-top: var(--space-sm);
+}
+
+.sel-variant-json > summary {
+  cursor: pointer;
+  opacity: 0.6;
 }
