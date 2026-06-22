@@ -415,7 +415,17 @@ export function CoreTabPanel({
         />
       )}
       {tab === "resolution" && (
-        <ResolutionView modsPath={result.modsPath} version={version ?? undefined} />
+        <ResolutionView
+          modsPath={result.modsPath}
+          version={version ?? result.profile}
+          conflicts={result.conflicts}
+          mods={result.mods}
+          verdict={verdict}
+          testing={testing}
+          onTest={onTest}
+          updatedJars={updatedJars}
+          onUpdated={onUpdated}
+        />
       )}
     </>
   );

@@ -8,9 +8,11 @@ from app.analyzer.packs import scan_datapacks, scan_resourcepacks, scan_shaderpa
 from app.analyzer.registry_index import build_registry_index
 from app.config import settings
 from app.enrich import enrich_mods
-from app.enrich.install import install_mod, update_mod
+from app.enrich.install import disable_mod, enable_mod, install_mod, update_mod
 from app.models import (
     BisectResult,
+    DisableRequest,
+    DisableResult,
     ExportRequest,
     ExportResult,
     InstallRequest,
@@ -208,6 +210,24 @@ def mods_install(req: InstallRequest) -> InstallResult:
     loader = req.loader or detect_loader(mods_dir)
     game_version = req.version or _resolve_for(mods_dir, None)[0].profile
     return install_mod(mods_dir, req.mod_id, loader, game_version)
+
+
+@app.post("/mods/disable", response_model=DisableResult)
+def mods_disable(req: DisableRequest) -> DisableResult:
+    """Sideline a mod's jar into ``disabled/`` (reversible), in place.
+
+    Explicit user action from the mixin resolver: when two mods incompatibly
+    patch the same target and no compatible update exists, disable one rather
+    than delete it. The jar is moved into ``mods/disabled/`` — excluded from
+    scans and boots — and ``/mods/enable`` restores it.
+    """
+    return disable_mod(_require_dir(req.path), req.jar)
+
+
+@app.post("/mods/enable", response_model=DisableResult)
+def mods_enable(req: DisableRequest) -> DisableResult:
+    """Restore a previously disabled mod from ``disabled/`` back into the set."""
+    return enable_mod(_require_dir(req.path), req.jar)
 
 
 @app.post("/runner/test", response_model=RunVerdict)

@@ -15,6 +15,7 @@ import type {
   Datapack,
   ExportResult,
   Loader,
+  Mod,
   ModEnvironment,
   RegistryIndex,
   ResolutionPlan,
@@ -25,7 +26,14 @@ import type {
   Severity,
   ShaderPack,
 } from "./lib/api";
-import { installMod, resolveExport, resolvePreview, updateMod } from "./lib/api";
+import {
+  disableMod,
+  enableMod,
+  installMod,
+  resolveExport,
+  resolvePreview,
+  updateMod,
+} from "./lib/api";
 import {
   CONFLICT_LABEL,
   CONSEQUENCE_HINT,
@@ -40,9 +48,12 @@ import {
   conflictSubject,
   countBySeverity,
   dependencyRelation,
+  groupMixinClusters,
   groupRecipeCollisions,
   isRecipeCollision,
   isRuntimeConfirmed,
+  type MixinCluster,
+  type MixinClusterMember,
   resolutionNote,
   SEVERITY_ORDER,
 } from "./lib/conflicts";
@@ -1798,7 +1809,224 @@ export function ShadersView({ packs }: { packs: ShaderPack[] }) {
   );
 }
 
-export function ResolutionView({ modsPath, version }: { modsPath: string; version?: string }) {
+// --- Mixin resolver (PROJECT.md §7): version-match first, disable as fallback --
+
+// Reversible sideline: moves a jar to `disabled/` (disable) and back (enable). A
+// plain toggle — no download, no state machine beyond the in-flight guard.
+function DisableButton({ modsPath, jar }: { modsPath: string; jar: string }) {
+  const [state, setState] = useState<"idle" | "busy" | "disabled" | "error">("idle");
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const toggle = async () => {
+    if (state === "busy") return;
+    const enabling = state === "disabled";
+    setState("busy");
+    setMsg(null);
+    try {
+      const r = enabling ? await enableMod(modsPath, jar) : await disableMod(modsPath, jar);
+      if (r.status === "disabled") setState("disabled");
+      else if (r.status === "enabled") setState("idle");
+      else {
+        setState("error");
+        setMsg(r.message ?? r.status);
+      }
+    } catch (e) {
+      setState("error");
+      setMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const label = state === "disabled" ? "enable" : state === "busy" ? "…" : "disable";
+  return (
+    <button
+      type="button"
+      className={`btn-ghost mixin-disable mixin-disable-${state}`}
+      onClick={toggle}
+      disabled={state === "busy"}
+      title={msg ?? (state === "disabled" ? "restore this mod" : "sideline this mod (reversible)")}
+    >
+      {label}
+    </button>
+  );
+}
+
+// One member of a mixin cluster: its identity, the version-match update (when a
+// compatible build exists) and the reversible disable fallback.
+function MixinMemberRow({
+  member,
+  modsPath,
+  version,
+  updatedJars,
+  onUpdated,
+}: {
+  member: MixinClusterMember;
+  modsPath: string;
+  version: string;
+  updatedJars: Set<string>;
+  onUpdated: (jar: string) => void;
+}) {
+  // Narrow to a concrete Mod so the version-match button only renders (and type-checks)
+  // when this member is a top-level jar with a compatible update available.
+  const updatableMod = member.mod?.updateAvailable && member.jar ? member.mod : null;
+  return (
+    <li className="mixin-member">
+      <span className="mixin-member-id">
+        {member.mod?.name ?? member.modId}
+        {member.currentVersion && <span className="mixin-member-v">{member.currentVersion}</span>}
+      </span>
+      <div className="mixin-member-actions">
+        {updatableMod && member.jar && (
+          <UpdateButton
+            mod={updatableMod}
+            modsPath={modsPath}
+            version={version}
+            alreadyUpdated={updatedJars.has(member.jar)}
+            onUpdated={onUpdated}
+          />
+        )}
+        {member.jar && <DisableButton modsPath={modsPath} jar={member.jar} />}
+      </div>
+    </li>
+  );
+}
+
+// One cluster: the co-patching mods, the shared target/methods, and a per-member
+// action list. Version-match is the headline fix; disable is the safe fallback.
+function MixinClusterCard({
+  cluster,
+  modsPath,
+  version,
+  updatedJars,
+  onUpdated,
+}: {
+  cluster: MixinCluster;
+  modsPath: string;
+  version: string;
+  updatedJars: Set<string>;
+  onUpdated: (jar: string) => void;
+}) {
+  const canUpdate = cluster.members.some((m) => m.updateAvailable);
+  const detail =
+    cluster.sharedMethods.length > 0
+      ? `same method${cluster.sharedMethods.length > 1 ? "s" : ""}: ${cluster.sharedMethods.join(", ")}`
+      : cluster.targets.join(", ");
+  return (
+    <details className="conflict-group" open>
+      <summary className="group-head">
+        <Chevron />
+        <span className="group-name recipe-pair">
+          {cluster.members.map((m) => m.modId).join(" ↔ ")}
+        </span>
+        {cluster.confirmedAtRuntime && <span className="tag-confirmed">confirmed at runtime</span>}
+      </summary>
+      <div className="mixin-cluster-body">
+        <p className="note">
+          Both patch the {detail} —{" "}
+          {canUpdate
+            ? "update one to a compatible build, or disable one (reversible)."
+            : "no compatible update found; disable one (reversible) to break the conflict."}
+        </p>
+        <ul className="mixin-members">
+          {cluster.members.map((m) => (
+            <MixinMemberRow
+              key={m.modId}
+              member={m}
+              modsPath={modsPath}
+              version={version}
+              updatedJars={updatedJars}
+              onUpdated={onUpdated}
+            />
+          ))}
+        </ul>
+      </div>
+    </details>
+  );
+}
+
+// The mixin-resolver block: the actionable clusters plus a headless re-test to
+// confirm the fix actually boots — the verify loop the static map can't close.
+function MixinResolver({
+  clusters,
+  modsPath,
+  version,
+  verdict,
+  testing,
+  onTest,
+  updatedJars,
+  onUpdated,
+}: {
+  clusters: MixinCluster[];
+  modsPath: string;
+  version: string;
+  verdict: RunVerdict | null;
+  testing: boolean;
+  onTest: () => void;
+  updatedJars: Set<string>;
+  onUpdated: (jar: string) => void;
+}) {
+  if (clusters.length === 0) return null;
+  return (
+    <section className="mixin-resolver">
+      <h2 className="resolution-section">Mixin conflicts</h2>
+      <p className="note">
+        {clusters.length} likely mixin conflict{clusters.length > 1 ? "s" : ""} — two mods patch the
+        same target incompatibly. Try a compatible update first, disable as a fallback, then
+        re-test.
+      </p>
+      <div className="conflict-groups">
+        {clusters.map((c) => (
+          <MixinClusterCard
+            key={c.key}
+            cluster={c}
+            modsPath={modsPath}
+            version={version}
+            updatedJars={updatedJars}
+            onUpdated={onUpdated}
+          />
+        ))}
+      </div>
+      <section className="runner">
+        <button className="btn-primary" type="button" onClick={onTest} disabled={testing}>
+          {testing ? "booting…" : "Re-test (headless boot)"}
+        </button>
+        {verdict && !testing && (
+          <span className="note">
+            last boot:{" "}
+            <span className={`run-${verdict.status}`}>{verdict.status.toUpperCase()}</span>
+            {verdict.cause && ` · ${verdict.cause.summary}`}
+          </span>
+        )}
+      </section>
+    </section>
+  );
+}
+
+export function ResolutionView({
+  modsPath,
+  version,
+  conflicts,
+  mods,
+  verdict,
+  testing,
+  onTest,
+  updatedJars,
+  onUpdated,
+}: {
+  modsPath: string;
+  version?: string;
+  conflicts: Conflict[];
+  mods: Mod[];
+  verdict: RunVerdict | null;
+  testing: boolean;
+  onTest: () => void;
+  updatedJars: Set<string>;
+  onUpdated: (jar: string) => void;
+}) {
+  const mixinExports = useMemo(() => (verdict ? new Set(verdict.mixinExports) : null), [verdict]);
+  const clusters = useMemo(
+    () => groupMixinClusters(conflicts, mods, mixinExports),
+    [conflicts, mods, mixinExports],
+  );
   const [plan, setPlan] = useState<ResolutionPlan | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1836,6 +2064,18 @@ export function ResolutionView({ modsPath, version }: { modsPath: string; versio
 
   return (
     <div className="view">
+      <MixinResolver
+        clusters={clusters}
+        modsPath={modsPath}
+        version={version ?? ""}
+        verdict={verdict}
+        testing={testing}
+        onTest={onTest}
+        updatedJars={updatedJars}
+        onUpdated={onUpdated}
+      />
+
+      {clusters.length > 0 && <h2 className="resolution-section">Generated configs</h2>}
       <section className="runner">
         <button
           className="btn-primary"

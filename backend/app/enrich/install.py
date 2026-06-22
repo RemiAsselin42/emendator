@@ -1,10 +1,14 @@
-"""Download and install mods: update one in place, or add a missing dependency.
+"""Mutate a mods folder: update a jar, add a missing dependency, or sideline one.
 
 :func:`update_mod` resolves the latest Modrinth version for an existing jar and
 atomically swaps it in (removing the previous file). :func:`install_mod` resolves
 a dependency the runner flagged as *missing* — by its loader-declared mod id —
 and adds it to the folder. Both verify the sha1 and write to a temp ``.part``
 first, so network/IO failures leave the mods folder untouched.
+
+:func:`disable_mod` / :func:`enable_mod` move a jar between the active set and a
+``disabled/`` sidecar folder — the no-download, fully reversible way to resolve an
+incompatible mixin pair when no compatible update exists (never a delete).
 """
 
 import hashlib
@@ -15,11 +19,15 @@ from pathlib import Path
 import httpx
 
 from app.enrich import modrinth
-from app.models import InstallResult, Loader, UpdateResult
+from app.models import DisableResult, InstallResult, Loader, UpdateResult
 
 _UA = "emendator/0.1 (modpack analyzer)"
 _TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 _MAX_BYTES = 300 * 1024 * 1024  # guard against a runaway download
+# Sidecar folder for disabled jars: a sibling of the active jars, not globbed by
+# the scanner/runner (both use a non-recursive ``*.jar`` glob), so a disabled mod
+# is excluded from scans and boots while staying one move away from restoration.
+_DISABLED_DIRNAME = "disabled"
 
 
 def update_mod(mods_dir: Path, jar: str, loader: Loader, game_version: str) -> UpdateResult:
@@ -104,6 +112,32 @@ def install_mod(mods_dir: Path, mod_id: str, loader: Loader, game_version: str) 
     return InstallResult(
         status="installed", mod_id=mod_id, jar=filename, version=info.get("version_number")
     )
+
+
+def disable_mod(mods_dir: Path, jar: str) -> DisableResult:
+    """Sideline ``jar`` into ``mods_dir/disabled/`` (reversible; no download)."""
+    src = mods_dir / jar
+    if not src.is_file():
+        return DisableResult(status="not_found", jar=jar, message=f"Jar not found: {jar}")
+    disabled_dir = mods_dir / _DISABLED_DIRNAME
+    try:
+        disabled_dir.mkdir(exist_ok=True)
+        src.replace(disabled_dir / jar)
+    except OSError as exc:
+        return DisableResult(status="error", jar=jar, message=f"Could not disable: {exc}")
+    return DisableResult(status="disabled", jar=jar)
+
+
+def enable_mod(mods_dir: Path, jar: str) -> DisableResult:
+    """Restore ``jar`` from ``mods_dir/disabled/`` back into the active set."""
+    src = mods_dir / _DISABLED_DIRNAME / jar
+    if not src.is_file():
+        return DisableResult(status="not_found", jar=jar, message=f"Disabled jar not found: {jar}")
+    try:
+        src.replace(mods_dir / jar)
+    except OSError as exc:
+        return DisableResult(status="error", jar=jar, message=f"Could not enable: {exc}")
+    return DisableResult(status="enabled", jar=jar)
 
 
 def _download(url: str, dest_dir: Path) -> Path | None:

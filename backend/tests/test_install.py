@@ -240,3 +240,35 @@ def test_find_install_skips_platform_pseudo_deps(monkeypatch: pytest.MonkeyPatch
     )
     assert modrinth.find_install("minecraft", "fabric", "1.21.1") is None
     assert modrinth.find_install("fabricloader", "fabric", "1.21.1") is None
+
+
+# --- disable_mod / enable_mod: reversible sideline, no download ----------------
+
+
+def test_disable_sidelines_jar(tmp_path: Path) -> None:
+    _old_jar(tmp_path, "spell_engine-1.0.jar")
+    result = install.disable_mod(tmp_path, "spell_engine-1.0.jar")
+    assert result.status == "disabled"
+    assert not (tmp_path / "spell_engine-1.0.jar").exists()  # out of the active set
+    assert (tmp_path / "disabled" / "spell_engine-1.0.jar").read_bytes() == b"OLD"  # preserved
+
+
+def test_disable_not_found(tmp_path: Path) -> None:
+    tmp_path.mkdir(exist_ok=True)
+    result = install.disable_mod(tmp_path, "nope.jar")
+    assert result.status == "not_found"
+
+
+def test_enable_restores_jar(tmp_path: Path) -> None:
+    _old_jar(tmp_path, "spell_engine-1.0.jar")
+    install.disable_mod(tmp_path, "spell_engine-1.0.jar")
+    result = install.enable_mod(tmp_path, "spell_engine-1.0.jar")
+    assert result.status == "enabled"
+    assert (tmp_path / "spell_engine-1.0.jar").read_bytes() == b"OLD"  # back in the set
+    assert not (tmp_path / "disabled" / "spell_engine-1.0.jar").exists()
+
+
+def test_enable_not_found_when_not_disabled(tmp_path: Path) -> None:
+    tmp_path.mkdir(exist_ok=True)
+    result = install.enable_mod(tmp_path, "spell_engine-1.0.jar")
+    assert result.status == "not_found"
