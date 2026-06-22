@@ -133,7 +133,7 @@ def boot_jars(
     """
     start = time.monotonic()
     if not is_docker_available():
-        return _error(profile, start, "Docker is not available — start Docker Desktop and retry.")
+        return _error(profile, start, "Docker is not available.")
 
     workdir = Path(tempfile.mkdtemp(prefix="emendator-run-"))
     container = f"emendator-{uuid4().hex[:8]}"

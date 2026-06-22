@@ -2,6 +2,7 @@ import {
   type ReactNode,
   type RefObject,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useReducer,
@@ -13,6 +14,7 @@ import type {
   Conflict,
   Datapack,
   ExportResult,
+  Loader,
   ModEnvironment,
   RegistryIndex,
   ResolutionPlan,
@@ -22,7 +24,7 @@ import type {
   Severity,
   ShaderPack,
 } from "./lib/api";
-import { resolveExport, resolvePreview } from "./lib/api";
+import { installMod, resolveExport, resolvePreview, updateMod } from "./lib/api";
 import {
   CONFLICT_LABEL,
   CONSEQUENCE_HINT,
@@ -59,41 +61,22 @@ function TestButton({ onTest, testing, disabled }: TestProps & { disabled?: bool
 
 export function Overview({
   result,
-  onNavigate,
+  updatedJars,
+  onUpdated,
 }: {
   result: ScanResult;
-  onNavigate: (tab: "conflicts" | "runtime") => void;
+  updatedJars: Set<string>;
+  onUpdated: (jar: string) => void;
 }) {
-  const sev = countBySeverity(result.conflicts);
-  // The mods list lives in this same view (below the stats); the mods/errors
-  // stats jump back to its top, the others switch to their dedicated tab.
   const modsScrollRef = useRef<HTMLDivElement>(null);
-  const scrollModsTop = () => modsScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-
   return (
     <div className="view view-mods">
-      <div className="stats">
-        <button type="button" className="stat" onClick={scrollModsTop}>
-          <span className="stat-n">{result.counts.mods}</span>
-          <span className="stat-l">mods</span>
-        </button>
-        <button type="button" className="stat" onClick={() => onNavigate("runtime")}>
-          <span className="stat-n">{result.counts.untestable}</span>
-          <span className="stat-l">not testable in server mode</span>
-        </button>
-        <button type="button" className="stat" onClick={() => onNavigate("conflicts")}>
-          <span className="stat-n">{result.counts.conflicts}</span>
-          <span className="stat-l">
-            conflicts · {sev.error}E / {sev.warning}W / {sev.info}I
-          </span>
-        </button>
-        <button type="button" className="stat" onClick={scrollModsTop}>
-          <span className="stat-n">{result.counts.errors}</span>
-          <span className="stat-l">unreadable jars</span>
-        </button>
-      </div>
-
-      <ModsSection result={result} scrollRef={modsScrollRef} />
+      <ModsSection
+        result={result}
+        scrollRef={modsScrollRef}
+        updatedJars={updatedJars}
+        onUpdated={onUpdated}
+      />
     </div>
   );
 }
@@ -358,7 +341,204 @@ function formatConstraint(v: string | string[]): string {
   return parts.join(", ");
 }
 
-function ModCard({ mod }: { mod: ScanResult["mods"][number] }) {
+function DownloadIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M8 1.5v7.5M4.5 6 8 9.5 11.5 6M2.5 13.5h11"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M3 8.5 6.5 12 13 4.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function SpinnerIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" className="spin">
+      <circle
+        cx="8"
+        cy="8"
+        r="6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeDasharray="28"
+        strokeDashoffset="10"
+      />
+    </svg>
+  );
+}
+
+function WarnIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M8 2 14.5 13.5H1.5L8 2Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path d="M8 6.5v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="8" cy="11.4" r="0.6" fill="currentColor" />
+    </svg>
+  );
+}
+
+function ErrorIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <path
+        d="M5.5 5.5 10.5 10.5M10.5 5.5 5.5 10.5"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+// idle -> download; updating -> spinner; done -> check (3s) then "gone" collapses
+// the width to 0 and "removed" unmounts it. warn/error end the run in place with
+// an alert icon (warn = nothing installed but no failure; error = update failed).
+type UpdateState = "idle" | "updating" | "done" | "gone" | "removed" | "warn" | "error";
+
+const DONE_HOLD_MS = 3000; // how long the check stays before collapsing
+const COLLAPSE_MS = 350; // matches the width transition before unmounting
+
+// The "update available" affordance: a download-icon button that downloads the
+// latest Modrinth version and swaps the jar in place, then confirms and fades out.
+function UpdateButton({
+  mod,
+  modsPath,
+  version,
+  alreadyUpdated,
+  onUpdated,
+}: {
+  mod: ScanResult["mods"][number];
+  modsPath: string;
+  version: string;
+  alreadyUpdated: boolean;
+  onUpdated: (jar: string) => void;
+}) {
+  // A card remounted after its jar was already updated this session (e.g. on
+  // returning to the panel) starts "removed" — the button is done, render nothing.
+  const [state, setState] = useState<UpdateState>(alreadyUpdated ? "removed" : "idle");
+  const [msg, setMsg] = useState<string | null>(null);
+  const timers = useRef<number[]>([]);
+
+  useEffect(() => {
+    const ids = timers.current;
+    return () => {
+      for (const id of ids) window.clearTimeout(id);
+    };
+  }, []);
+
+  const done = state === "done" || state === "gone";
+  const title =
+    state === "error"
+      ? (msg ?? "update failed")
+      : state === "warn"
+        ? (msg ?? "no update installed")
+        : done
+          ? `updated${mod.latestVersion ? ` → ${mod.latestVersion}` : ""} · rescan to refresh`
+          : state === "updating"
+            ? "updating…"
+            : `update${mod.latestVersion ? ` → ${mod.latestVersion}` : ""}`;
+
+  const onClick = async () => {
+    if (state !== "idle" && state !== "error" && state !== "warn") return;
+    setState("updating");
+    setMsg(null);
+    try {
+      const r = await updateMod(modsPath, mod.jar, version, mod.loader);
+      if (r.status === "updated") {
+        setState("done");
+        // The in-place swap doesn't re-scan, so tell the list this jar is no longer
+        // pending — it drops out of the "to update" count/filter immediately.
+        onUpdated(mod.jar);
+        // Hold the check, then collapse the width, then unmount (no leftover box).
+        timers.current.push(
+          window.setTimeout(() => {
+            setState("gone");
+            timers.current.push(window.setTimeout(() => setState("removed"), COLLAPSE_MS));
+          }, DONE_HOLD_MS),
+        );
+      } else {
+        // A hard "error" status (jar gone, download/checksum/install) is the real
+        // failure; not_found / no_update are soft — nothing installed, nothing broke.
+        setState(r.status === "error" ? "error" : "warn");
+        setMsg(r.message ?? r.status);
+      }
+    } catch (e) {
+      setState("error");
+      setMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  if (state === "removed") return null;
+
+  const icon =
+    state === "updating" ? (
+      <SpinnerIcon />
+    ) : done ? (
+      <CheckIcon />
+    ) : state === "warn" ? (
+      <WarnIcon />
+    ) : state === "error" ? (
+      <ErrorIcon />
+    ) : (
+      <DownloadIcon />
+    );
+
+  return (
+    <button
+      type="button"
+      className={`mod-update mod-update-${state}`}
+      onClick={onClick}
+      disabled={state !== "idle" && state !== "error" && state !== "warn"}
+      title={title}
+      aria-label={title}
+    >
+      {icon}
+    </button>
+  );
+}
+
+function ModCard({
+  mod,
+  modsPath,
+  version,
+  alreadyUpdated,
+  onUpdated,
+}: {
+  mod: ScanResult["mods"][number];
+  modsPath: string;
+  version: string;
+  alreadyUpdated: boolean;
+  onUpdated: (jar: string) => void;
+}) {
   const depends = Object.entries(mod.depends);
   return (
     <article className="mod-card">
@@ -374,22 +554,28 @@ function ModCard({ mod }: { mod: ScanResult["mods"][number] }) {
             )}
           </h3>
           {mod.name && <span className="mod-slug">{mod.id}</span>}
-          {mod.updateAvailable && (
-            <span className="mod-update">
-              update{mod.latestVersion ? ` → ${mod.latestVersion}` : ""}
-            </span>
-          )}
         </div>
-        <div className="mod-card-tags">
-          {mod.provider && (
-            <span className={`mod-provider provider-${mod.provider}`}>{mod.provider}</span>
+        <div className="mod-card-right">
+          <div className="mod-card-tags">
+            {mod.provider && (
+              <span className={`mod-provider provider-${mod.provider}`}>{mod.provider}</span>
+            )}
+            {mod.loader !== "unknown" && (
+              <span className={`mod-loader loader-${mod.loader}`}>{mod.loader}</span>
+            )}
+            <span className={`mod-env env-${mod.environment === "*" ? "any" : mod.environment}`}>
+              {mod.environment === "*" ? "client+server" : mod.environment}
+            </span>
+          </div>
+          {mod.updateAvailable && (
+            <UpdateButton
+              mod={mod}
+              modsPath={modsPath}
+              version={version}
+              alreadyUpdated={alreadyUpdated}
+              onUpdated={onUpdated}
+            />
           )}
-          {mod.loader !== "unknown" && (
-            <span className={`mod-loader loader-${mod.loader}`}>{mod.loader}</span>
-          )}
-          <span className={`mod-env env-${mod.environment === "*" ? "any" : mod.environment}`}>
-            {mod.environment === "*" ? "client+server" : mod.environment}
-          </span>
         </div>
       </header>
 
@@ -402,7 +588,7 @@ function ModCard({ mod }: { mod: ScanResult["mods"][number] }) {
           <dt>minecraft</dt>
           <dd>{mod.mcVersion ?? "—"}</dd>
         </div>
-        <div className="mod-field mod-field-wide">
+        <div className="mod-field">
           <dt>jar</dt>
           <dd className="mod-jar">{mod.jar}</dd>
         </div>
@@ -441,6 +627,46 @@ function ModCard({ mod }: { mod: ScanResult["mods"][number] }) {
   );
 }
 
+// Best-effort display name for a jar that failed metadata parsing: drop the
+// extension and the trailing version/loader tail (a separator before a digit),
+// then normalize the separators. Falls back to the raw filename.
+function recoverModName(jar: string): string {
+  const base = jar
+    .replace(/\.jar$/i, "")
+    .replace(/[-_+ ](?:v|mc)?\d.*$/i, "")
+    .replace(/[-_]+/g, " ")
+    .trim();
+  return base || jar;
+}
+
+// A jar that couldn't be analyzed (corrupt zip, unrecognized loader metadata…).
+// It still earns a card: the recovered name as the title, the filename as the
+// slug, and the parse error shown inside.
+function ErrorCard({ name, jar, reason }: { name: string; jar: string; reason: string }) {
+  return (
+    <article className="mod-card mod-card-error">
+      <header className="mod-card-head">
+        <div className="mod-card-id">
+          <h3 className="mod-name">{name}</h3>
+          <span className="mod-slug">{jar}</span>
+        </div>
+        <div className="mod-card-right">
+          <div className="mod-card-tags">
+            <span className="mod-error-badge">unreadable</span>
+          </div>
+        </div>
+      </header>
+      <p className="mod-error-reason">{reason}</p>
+    </article>
+  );
+}
+
+// The mod list renders a heterogeneous stream: a parsed mod, or a jar that
+// failed analysis. Both carry a `jar` — the virtualizer's key + height-cache key.
+type ModListEntry =
+  | { kind: "mod"; jar: string; mod: ScanResult["mods"][number] }
+  | { kind: "error"; jar: string; name: string; reason: string };
+
 // Rough first-paint height of a card (px); real heights are measured on mount
 // and replace this. Only off-screen estimates use it, so being a little off is
 // harmless — it just nudges the initial scrollbar length.
@@ -453,11 +679,19 @@ const OVERSCAN = 4; // cards rendered just outside the viewport, each side
 // mod), so each rendered card is measured and its height cached by jar; offsets
 // are recomputed from the cache. Keeps the DOM tiny for large modpacks.
 function VirtualModList({
-  mods,
+  entries,
   scrollRef,
+  modsPath,
+  version,
+  updatedJars,
+  onUpdated,
 }: {
-  mods: ScanResult["mods"];
+  entries: ModListEntry[];
   scrollRef: RefObject<HTMLDivElement | null>;
+  modsPath: string;
+  version: string;
+  updatedJars: Set<string>;
+  onUpdated: (jar: string) => void;
 }) {
   // Internal ref drives the virtualization (scroll/measure); scrollRef mirrors
   // the same element so the parent (Overview stats) can scroll the list to top.
@@ -515,28 +749,28 @@ function VirtualModList({
   // Cumulative top offset of every card from the measured/estimated heights.
   // Computed every render (not memoized): heights is a mutable ref, so a measure
   // pass that calls bump() must recompute offsets with the same `mods`.
-  const tops = new Array<number>(mods.length);
+  const tops = new Array<number>(entries.length);
   let acc = 0;
-  for (let i = 0; i < mods.length; i++) {
+  for (let i = 0; i < entries.length; i++) {
     tops[i] = acc;
-    acc += (heights.current.get(mods[i].jar) ?? CARD_ESTIMATE) + CARD_GAP;
+    acc += (heights.current.get(entries[i].jar) ?? CARD_ESTIMATE) + CARD_GAP;
   }
-  const totalH = mods.length > 0 ? acc - CARD_GAP : 0;
+  const totalH = entries.length > 0 ? acc - CARD_GAP : 0;
 
   const top = scrollTop;
   const bottom = scrollTop + viewportH;
   let start = 0;
-  while (start < mods.length) {
-    const h = heights.current.get(mods[start].jar) ?? CARD_ESTIMATE;
+  while (start < entries.length) {
+    const h = heights.current.get(entries[start].jar) ?? CARD_ESTIMATE;
     if (tops[start] + h >= top) break;
     start++;
   }
   let end = start;
-  while (end < mods.length && tops[end] <= bottom) end++;
+  while (end < entries.length && tops[end] <= bottom) end++;
   start = Math.max(0, start - OVERSCAN);
-  end = Math.min(mods.length, end + OVERSCAN);
+  end = Math.min(entries.length, end + OVERSCAN);
 
-  const window = mods.slice(start, end);
+  const window = entries.slice(start, end);
 
   return (
     <div
@@ -547,16 +781,26 @@ function VirtualModList({
       className="mods-list"
     >
       <div className="mods-virt" style={{ height: totalH }}>
-        {window.map((mod, i) => {
+        {window.map((entry, i) => {
           const index = start + i;
           return (
             <div
-              key={mod.jar}
-              ref={setNode(mod.jar)}
+              key={entry.jar}
+              ref={setNode(entry.jar)}
               className="mods-virt-item"
               style={{ transform: `translateY(${tops[index]}px)` }}
             >
-              <ModCard mod={mod} />
+              {entry.kind === "mod" ? (
+                <ModCard
+                  mod={entry.mod}
+                  modsPath={modsPath}
+                  version={version}
+                  alreadyUpdated={updatedJars.has(entry.jar)}
+                  onUpdated={onUpdated}
+                />
+              ) : (
+                <ErrorCard name={entry.name} jar={entry.jar} reason={entry.reason} />
+              )}
             </div>
           );
         })}
@@ -566,21 +810,34 @@ function VirtualModList({
 }
 
 const ENV_FILTERS: { id: ModEnvironment; label: string }[] = [
-  { id: "server", label: "server" },
-  { id: "client", label: "client" },
-  { id: "*", label: "client+server" },
+  { id: "server", label: "Server" },
+  { id: "client", label: "Client" },
+  { id: "*", label: "Client + Server" },
 ];
 
 function ModsSection({
   result,
   scrollRef,
+  updatedJars,
+  onUpdated,
 }: {
   result: ScanResult;
   scrollRef: RefObject<HTMLDivElement | null>;
+  updatedJars: Set<string>;
+  onUpdated: (jar: string) => void;
 }) {
+  // The mods folder + resolved version, threaded to each card's update button.
+  const modsPath = result.modsPath;
+  const version = result.profile;
   const [query, setQuery] = useState("");
   // Empty set = no env filter (show all); otherwise show only checked envs.
   const [envs, setEnvs] = useState<Set<ModEnvironment>>(new Set());
+  // Quick filters, off by default: isolate mods with an update / unreadable jars.
+  const [onlyUpdate, setOnlyUpdate] = useState(false);
+  const [onlyErrors, setOnlyErrors] = useState(false);
+  // updatedJars (jars updated in place, no re-scan yet) is owned by App so this
+  // count survives the panel unmounting; the backend's stale updateAvailable flag
+  // for those jars is masked here.
 
   const toggleEnv = (e: ModEnvironment) =>
     setEnvs((prev) => {
@@ -599,10 +856,42 @@ function ModsSection({
     return c;
   }, [result.mods]);
 
+  const updatableCount = useMemo(
+    () => result.mods.filter((m) => m.updateAvailable && !updatedJars.has(m.jar)).length,
+    [result.mods, updatedJars],
+  );
+
+  // Mods first, then the unreadable jars, as one card stream. Errors get a name
+  // recovered from the filename — the metadata that would carry the real one is
+  // exactly what failed to parse.
+  const entries = useMemo<ModListEntry[]>(() => {
+    const mods = result.mods.map((mod): ModListEntry => ({ kind: "mod", jar: mod.jar, mod }));
+    const errors = result.errors.map(
+      (err): ModListEntry => ({
+        kind: "error",
+        jar: err.jar,
+        name: recoverModName(err.jar),
+        reason: err.reason,
+      }),
+    );
+    return [...mods, ...errors];
+  }, [result.mods, result.errors]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return result.mods.filter((mod) => {
-      if (envs.size > 0 && !envs.has(mod.environment)) return false;
+    const envActive = envs.size > 0;
+    return entries.filter((entry) => {
+      if (entry.kind === "error") {
+        // Errors carry no env/update facet, so an env or update-only filter scopes
+        // the list to mods and drops them — unless the errors chip is also on.
+        if (envActive || (onlyUpdate && !onlyErrors)) return false;
+        if (q) return `${entry.name} ${entry.jar} ${entry.reason}`.toLowerCase().includes(q);
+        return true;
+      }
+      const mod = entry.mod;
+      if (onlyErrors && !onlyUpdate) return false;
+      if (envActive && !envs.has(mod.environment)) return false;
+      if (onlyUpdate && (!mod.updateAvailable || updatedJars.has(mod.jar))) return false;
       if (!q) return true;
       const haystack = [
         mod.id,
@@ -617,7 +906,7 @@ function ModsSection({
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [result.mods, query, envs]);
+  }, [entries, query, envs, onlyUpdate, onlyErrors, updatedJars]);
 
   return (
     <>
@@ -641,27 +930,42 @@ function ModsSection({
               {f.label} ({envCounts.get(f.id)})
             </button>
           ))}
+          {updatableCount > 0 && (
+            <button
+              type="button"
+              className={onlyUpdate ? "chip chip-on chip-update" : "chip chip-update"}
+              onClick={() => setOnlyUpdate((v) => !v)}
+            >
+              To update ({updatableCount})
+            </button>
+          )}
+          {result.errors.length > 0 && (
+            <button
+              type="button"
+              className={onlyErrors ? "chip chip-on chip-error" : "chip chip-error"}
+              onClick={() => setOnlyErrors((v) => !v)}
+            >
+              errors ({result.errors.length})
+            </button>
+          )}
         </div>
       </div>
 
       <p className="note mods-count">
-        {filtered.length} of {result.mods.length} mods
+        {filtered.length} of {entries.length}
       </p>
-
-      {result.errors.length > 0 && (
-        <ul className="errors">
-          {result.errors.map((err) => (
-            <li key={err.jar}>
-              {err.jar}: {err.reason}
-            </li>
-          ))}
-        </ul>
-      )}
 
       {filtered.length === 0 ? (
         <p className="note">No mods match the current filters.</p>
       ) : (
-        <VirtualModList mods={filtered} scrollRef={scrollRef} />
+        <VirtualModList
+          entries={filtered}
+          scrollRef={scrollRef}
+          modsPath={modsPath}
+          version={version}
+          updatedJars={updatedJars}
+          onUpdated={onUpdated}
+        />
       )}
     </>
   );
@@ -673,31 +977,218 @@ function bisectStatusClass(status: BisectResult["status"]): string {
   return "run-error";
 }
 
-export function RuntimeView({
+// Per-mod install lifecycle. idle -> installing -> installed (check) / warn (no
+// Modrinth match) / error (download failed). "installing"/"installed" are locked;
+// warn/error can be retried.
+type InstallState = "idle" | "installing" | "installed" | "warn" | "error";
+
+// A "settled" mod has been attempted and won't change without a retry — the
+// trigger for the panel's auto re-test once every dep has been dealt with.
+const SETTLED: ReadonlySet<InstallState> = new Set(["installed", "warn", "error"]);
+
+// One missing dependency: its id and a download-icon button driven by the panel's
+// state (so "Install all" and per-row clicks share one source of truth).
+function InstallRow({
+  modId,
+  state,
+  msg,
+  disabled,
+  onInstall,
+}: {
+  modId: string;
+  state: InstallState;
+  msg: string | null;
+  disabled: boolean;
+  onInstall: (modId: string) => void;
+}) {
+  // Map install states onto the existing mod-update button visuals.
+  const btnState = state === "installing" ? "updating" : state === "installed" ? "done" : state;
+  const icon =
+    state === "installing" ? (
+      <SpinnerIcon />
+    ) : state === "installed" ? (
+      <CheckIcon />
+    ) : state === "warn" ? (
+      <WarnIcon />
+    ) : state === "error" ? (
+      <ErrorIcon />
+    ) : (
+      <DownloadIcon />
+    );
+  const title =
+    state === "installed"
+      ? `installed ${msg}`
+      : state === "warn" || state === "error"
+        ? (msg ?? "install failed")
+        : state === "installing"
+          ? "installing…"
+          : `install ${modId} from Modrinth`;
+
+  return (
+    <li className="missing-row">
+      <span className="missing-id">{modId}</span>
+      <button
+        type="button"
+        className={`mod-update mod-update-${btnState}`}
+        onClick={() => onInstall(modId)}
+        disabled={disabled || state === "installing" || state === "installed"}
+        title={title}
+        aria-label={title}
+      >
+        {icon}
+      </button>
+      {msg && <span className="note missing-msg">{msg}</span>}
+    </li>
+  );
+}
+
+// Shown under a runtime verdict whose cause is a missing dependency: install each
+// flagged mod from Modrinth (one by one or all at once). Once every dep has been
+// attempted and at least one was installed, it auto re-tests to confirm the fix.
+function MissingDepsPanel({
+  mods,
+  modsPath,
+  version,
+  loader,
+  onRetest,
+  testing,
+}: {
+  mods: string[];
+  modsPath: string;
+  version: string;
+  loader?: Loader;
+  onRetest: () => void;
+  testing: boolean;
+}) {
+  const [states, setStates] = useState<Record<string, InstallState>>({});
+  const [msgs, setMsgs] = useState<Record<string, string | null>>({});
+  const [installingAll, setInstallingAll] = useState(false);
+  // One re-test per panel: it remounts on each new verdict (keyed in TestView).
+  const retested = useRef(false);
+
+  // Install one mod, recording its outcome. Returns whether the jar landed.
+  const install = async (id: string): Promise<boolean> => {
+    setStates((p) => ({ ...p, [id]: "installing" }));
+    setMsgs((p) => ({ ...p, [id]: null }));
+    try {
+      const r = await installMod(modsPath, id, version, loader);
+      const next: InstallState =
+        r.status === "installed" ? "installed" : r.status === "error" ? "error" : "warn";
+      const note =
+        r.status === "installed"
+          ? r.version
+            ? `${r.jar} (${r.version})`
+            : (r.jar ?? "installed")
+          : (r.message ?? r.status);
+      setStates((p) => ({ ...p, [id]: next }));
+      setMsgs((p) => ({ ...p, [id]: note }));
+      return r.status === "installed";
+    } catch (e) {
+      setStates((p) => ({ ...p, [id]: "error" }));
+      setMsgs((p) => ({
+        ...p,
+        [id]: e instanceof Error ? e.message : String(e),
+      }));
+      return false;
+    }
+  };
+
+  // Install every dep that isn't already installed or in flight, sequentially
+  // (one shared mods folder; serial keeps writes and rate limits sane).
+  const installAll = async () => {
+    setInstallingAll(true);
+    try {
+      for (const id of mods) {
+        const s = states[id] ?? "idle";
+        if (s === "installed" || s === "installing") continue;
+        await install(id);
+      }
+    } finally {
+      setInstallingAll(false);
+    }
+  };
+
+  // Auto re-test: fire once every dep has settled (installed/warn/error) and at
+  // least one was actually installed — gated off mid-batch so it boots only once.
+  useEffect(() => {
+    if (retested.current || installingAll || testing) return;
+    const allSettled = mods.every((id) => SETTLED.has(states[id] ?? "idle"));
+    const anyInstalled = mods.some((id) => states[id] === "installed");
+    if (allSettled && anyInstalled) {
+      retested.current = true;
+      onRetest();
+    }
+  }, [states, installingAll, testing, mods, onRetest]);
+
+  const remaining = mods.filter((id) => (states[id] ?? "idle") !== "installed").length;
+  const busy = installingAll || mods.some((id) => states[id] === "installing");
+
+  return (
+    <div className="panel missing-deps">
+      <p className="note">
+        {mods.length} missing {mods.length > 1 ? "dependencies" : "dependency"} — install from
+        Modrinth; it re-tests automatically once they're in.
+      </p>
+      {remaining > 0 && (
+        <button
+          type="button"
+          className="btn-primary install-all"
+          onClick={installAll}
+          disabled={busy}
+        >
+          {installingAll
+            ? "installing…"
+            : `Install all & re-test${remaining < mods.length ? ` (${remaining} left)` : ""}`}
+        </button>
+      )}
+      <ul className="missing-list">
+        {mods.map((id) => (
+          <InstallRow
+            key={id}
+            modId={id}
+            state={states[id] ?? "idle"}
+            msg={msgs[id] ?? null}
+            disabled={installingAll}
+            onInstall={install}
+          />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// Shared "runner not available for this version" notice (both runtime tabs).
+function RunnerUnsupported({ block }: { block: string | null }) {
+  return (
+    <p className="note">
+      Runtime testing isn't available yet for {block ?? "this version"} — static analysis only. The
+      headless runner needs server artifacts that aren't published for this block.
+    </p>
+  );
+}
+
+// "Test" sub-tab: boot the whole set headlessly and read the verdict (plus the
+// missing-dependency installer when that's the cause).
+function TestView({
   verdict,
   onTest,
   testing,
-  onBisect,
-  bisecting,
-  bisectResult,
   runnerSupported,
   block,
+  modsPath,
+  version,
+  loader,
 }: {
   verdict: RunVerdict | null;
-  onBisect: () => void;
-  bisecting: boolean;
-  bisectResult: BisectResult | null;
   runnerSupported: boolean;
   block: string | null;
+  modsPath: string;
+  version: string;
+  loader?: Loader;
 } & TestProps) {
   return (
     <div className="view">
-      {!runnerSupported && (
-        <p className="note">
-          Runtime testing isn't available yet for {block ?? "this version"} — static analysis only.
-          The headless runner needs server artifacts that aren't published for this block.
-        </p>
-      )}
+      {!runnerSupported && <RunnerUnsupported block={block} />}
       <section className="runner">
         <TestButton onTest={onTest} testing={testing} disabled={!runnerSupported} />
         {testing && <span className="note"> a real boot takes minutes; needs Docker running</span>}
@@ -716,14 +1207,38 @@ export function RuntimeView({
             <>
               <p className="note">
                 {verdict.cause.category}: {verdict.cause.summary}
-                {verdict.cause.mods.length > 0 && ` — ${verdict.cause.mods.join(", ")}`}
               </p>
-              {verdict.cause.excerpt && <pre className="log">{verdict.cause.excerpt}</pre>}
+              <p>
+                The runner detected {verdict.cause.mods.length} mod
+                {verdict.cause.mods.length > 1 ? "s" : ""} that may be involved :
+              </p>
+              <ul>
+                <li className="note cause-mods">
+                  {verdict.cause.mods.length > 0 && `${verdict.cause.mods.join(", ")}`}
+                </li>
+              </ul>
+              {verdict.cause.excerpt && (
+                <details className="cause-excerpt">
+                  <summary>Causes</summary>
+                  <pre className="log">{verdict.cause.excerpt}</pre>
+                </details>
+              )}
+              {verdict.cause.category === "missing_dependency" && verdict.cause.mods.length > 0 && (
+                <MissingDepsPanel
+                  key={`${verdict.durationMs}:${verdict.cause.mods.join(",")}`}
+                  mods={verdict.cause.mods}
+                  modsPath={modsPath}
+                  version={version}
+                  loader={loader}
+                  onRetest={onTest}
+                  testing={testing}
+                />
+              )}
             </>
           )}
           {verdict.logTail && verdict.status !== "error" && (
-            <details>
-              <summary>log tail</summary>
+            <details className="log-tail">
+              <summary>Log tail</summary>
               <pre className="log">{verdict.logTail}</pre>
             </details>
           )}
@@ -731,7 +1246,27 @@ export function RuntimeView({
       ) : (
         <p className="note">No boot yet. Run a test to get a runtime verdict.</p>
       )}
+    </div>
+  );
+}
 
+// "Bisect" sub-tab: delta-debug a crashing set down to the minimal guilty subset.
+function BisectView({
+  onBisect,
+  bisecting,
+  bisectResult,
+  runnerSupported,
+  block,
+}: {
+  onBisect: () => void;
+  bisecting: boolean;
+  bisectResult: BisectResult | null;
+  runnerSupported: boolean;
+  block: string | null;
+}) {
+  return (
+    <div className="view">
+      {!runnerSupported && <RunnerUnsupported block={block} />}
       <section className="runner">
         <button
           className="btn-primary"
@@ -746,7 +1281,7 @@ export function RuntimeView({
         )}
       </section>
 
-      {bisectResult && (
+      {bisectResult ? (
         <div className="panel">
           <p>
             bisection{" "}
@@ -757,7 +1292,14 @@ export function RuntimeView({
             {bisectResult.boots} boots · {(bisectResult.durationMs / 1000).toFixed(1)}s
           </p>
           {bisectResult.members.length > 0 && (
-            <p className="members">guilty set: {bisectResult.members.join(", ")}</p>
+            <>
+              <p className="members">The guilty set that caused the issue: </p>
+              <ul>
+                <li className="note cause-mods">
+                  {bisectResult.members.length > 0 && `${bisectResult.members.join(", ")}`}
+                </li>
+              </ul>
+            </>
           )}
           {bisectResult.cause && (
             <p className="note">
@@ -766,6 +1308,83 @@ export function RuntimeView({
           )}
           {bisectResult.note && <p className="note">{bisectResult.note}</p>}
         </div>
+      ) : (
+        <p className="note">No bisection yet. Run one to isolate the guilty subset.</p>
+      )}
+    </div>
+  );
+}
+
+type RuntimeSub = "test" | "bisect";
+
+// "Runtime" tab: a single panel split into two sub-tabs — Test (boot the set) and
+// Bisect (isolate the guilty subset) — that share the same verdict/bisect state.
+export function RuntimeView({
+  verdict,
+  onTest,
+  testing,
+  onBisect,
+  bisecting,
+  bisectResult,
+  runnerSupported,
+  block,
+  modsPath,
+  version,
+  loader,
+}: {
+  verdict: RunVerdict | null;
+  onBisect: () => void;
+  bisecting: boolean;
+  bisectResult: BisectResult | null;
+  runnerSupported: boolean;
+  block: string | null;
+  modsPath: string;
+  version: string;
+  loader?: Loader;
+} & TestProps) {
+  const [sub, setSub] = useState<RuntimeSub>("test");
+  return (
+    <div className="view">
+      <div className="subtabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={sub === "test"}
+          className={sub === "test" ? "chip chip-on" : "chip"}
+          onClick={() => setSub("test")}
+        >
+          Test
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={sub === "bisect"}
+          className={sub === "bisect" ? "chip chip-on" : "chip"}
+          onClick={() => setSub("bisect")}
+        >
+          Bisect
+        </button>
+      </div>
+
+      {sub === "test" ? (
+        <TestView
+          verdict={verdict}
+          onTest={onTest}
+          testing={testing}
+          runnerSupported={runnerSupported}
+          block={block}
+          modsPath={modsPath}
+          version={version}
+          loader={loader}
+        />
+      ) : (
+        <BisectView
+          onBisect={onBisect}
+          bisecting={bisecting}
+          bisectResult={bisectResult}
+          runnerSupported={runnerSupported}
+          block={block}
+        />
       )}
     </div>
   );
@@ -844,7 +1463,7 @@ export function DatapacksView({ packs, conflicts }: { packs: Datapack[]; conflic
     <div className="view">
       {conflicts.length > 0 && (
         <p className="note">
-          {conflicts.length} datapack override{conflicts.length > 1 ? "s" : ""} — two datapacks ship
+          {conflicts.length} datapack override{conflicts.length > 1 ? "s" : ""} - two datapacks ship
           the same recipe/loot/tag; load order decides.
         </p>
       )}
@@ -896,10 +1515,6 @@ export function ItemsView({ index }: { index: RegistryIndex }) {
 
   return (
     <div className="view">
-      <p className="note">
-        {index.total} items & blocks ({index.itemCount} items · {index.blockCount} blocks).
-        Approximate — built from lang/model assets, so code-only registrations aren't listed.
-      </p>
       <div className="mods-controls">
         <input
           className="path-input"
