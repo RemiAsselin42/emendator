@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import subjectFixture from "./__fixtures__/conflict-subjects.json";
 import type { Conflict, Mod, RunVerdict } from "./api";
 import {
   conflictKey,
@@ -81,6 +82,21 @@ describe("conflicts helpers", () => {
     expect(conflictKey(mk({ type: "dependency", detail: { missing: "b" }, members: ["a"] }))).toBe(
       "dependency-missing b-a",
     );
+  });
+
+  // Cross-stack contract (todo.md > Cross-cutting): the subject the front reads
+  // from detail.recipe / detail.tag must equal the id the backend derives from the
+  // jar path. The shared fixture is the single source of truth; the backend test
+  // (test_subject_keys.py) pins its derivation to these same `subject` values.
+  it("reads the same subject the backend derives (shared fixture)", () => {
+    for (const { subject } of subjectFixture.recipe_collision) {
+      expect(conflictSubject(mk({ type: "recipe_collision", detail: { recipe: subject } }))).toBe(
+        subject,
+      );
+    }
+    for (const { subject } of subjectFixture.tag_overlap) {
+      expect(conflictSubject(mk({ type: "tag_overlap", detail: { tag: subject } }))).toBe(subject);
+    }
   });
 });
 

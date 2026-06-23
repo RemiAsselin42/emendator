@@ -1,0 +1,14 @@
+{
+  "_comment": "Cross-stack contract fixture (todo.md > Cross-cutting). Winner maps are keyed by a conflict's subject string (recipe id / tag id). The backend derives it from a jar data path (_recipe_id_from_path / _tag_id_from_path) and stores it in detail.recipe / detail.tag; the front re-reads it via conflictSubject(). Both must produce the SAME string. The backend test (test_subject_keys.py) pins derive(path) == subject; the front test (conflicts.test.ts) pins conflictSubject({detail}) == subject. Same `subject` values here lock the two together.",
+  "recipe_collision": [
+    { "path": "data/mymod/recipe/foo.json", "subject": "mymod:foo" },
+    {
+      "path": "data/farmersdelight/recipes/cooking/fried_rice.json",
+      "subject": "farmersdelight:cooking/fried_rice"
+    }
+  ],
+  "tag_overlap": [
+    { "path": "data/c/tags/items/ingots/tin.json", "subject": "c:ingots/tin" },
+    { "path": "data/forge/tags/items/ores/iron.json", "subject": "forge:ores/iron" }
+  ]
+}
