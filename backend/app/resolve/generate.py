@@ -37,6 +37,13 @@ def generate_unify_json(
     ``tag_winners`` (tag id -> winning mod) records the per-tag canonical pick from
     the selection cards as a ``priorityOverrides`` map; tags left unset fall back to
     the global ``modPriorities`` order.
+
+    Schema confirmed against Almost Unified's Unification-Config wiki: ``modPriorities``
+    is an ordered mod-id array, ``tags`` an array of tag ids (we emit literal ids, not
+    ``{material}`` templates), and ``priorityOverrides`` is ``{tag id: single mod id}`` —
+    so AU *does* support per-tag winners and no global-only fallback is needed. The tag
+    namespace must match what AU expects for the target (``c:`` on modern versions),
+    which is exactly what the scan emits via ``profile.tag_namespace``.
     """
     if not tag_overlaps:
         return None

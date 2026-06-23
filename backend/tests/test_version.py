@@ -116,6 +116,21 @@ def test_resolve_profile_pulls_block_constants() -> None:
     assert future.runner_supported is False
 
 
+def test_datapack_format_is_version_exact_not_block_level() -> None:
+    # Same block ("1.18–1.20.4"), different exact pack_format per version — the bug
+    # this fixes: a 1.19.2 pack must not inherit the block's 1.20.4 value (26).
+    assert resolve_profile("1.18").datapack_format == 8
+    assert resolve_profile("1.18.2").datapack_format == 9
+    assert resolve_profile("1.19.2").datapack_format == 10
+    assert resolve_profile("1.19.4").datapack_format == 12
+    assert resolve_profile("1.20.1").datapack_format == 15
+    assert resolve_profile("1.20.4").datapack_format == 26
+    # Newer blocks: top-of-block versions get their own value, not the block floor's.
+    assert resolve_profile("1.21.1").datapack_format == 48
+    assert resolve_profile("1.21.5").datapack_format == 71
+    assert resolve_profile("1.21.8").datapack_format == 81
+
+
 # --- detect_version -------------------------------------------------------
 
 
