@@ -34,7 +34,7 @@ class VersionProfile(CamelModel):
     recipe_path: str
     tag_path: str
     tag_namespace: str
-    datapack_format: int  # pack_format for generated datapacks
+    datapack_format: int  # version-exact pack_format for generated datapacks
     runner_supported: bool = True
 
     def recipe_glob(self) -> str:
@@ -59,7 +59,7 @@ class Block:
     recipe_path: str
     tag_path: str
     tag_namespace: str
-    datapack_format: int
+    datapack_format: int  # representative pack_format; resolved version-exact via _DATAPACK_FORMATS
     # Real releases inside the block, ascending; last = runner default / rep.
     known: tuple[McVersion, ...]
     runner_supported: bool = True
@@ -149,6 +149,42 @@ _BLOCKS: tuple[Block, ...] = (
 )
 
 
+# Data-pack ``pack_format`` is *version-exact*, not block-level: a value higher
+# than the target's makes the pack read as "made for a newer version" and the game
+# may refuse to load it. The block constant above is the block's representative
+# value (fine for a static export); writing into a *live* instance needs the exact
+# format for the resolved version. (version floor -> pack_format), ascending;
+# resolve by the highest floor <= the target version.
+_DATAPACK_FORMATS: tuple[tuple[McVersion, int], ...] = (
+    (_v("1.18"), 8),
+    (_v("1.18.2"), 9),
+    (_v("1.19"), 10),
+    (_v("1.19.4"), 12),
+    (_v("1.20"), 15),
+    (_v("1.20.2"), 18),
+    (_v("1.20.3"), 26),
+    (_v("1.20.5"), 41),
+    (_v("1.21"), 48),
+    (_v("1.21.2"), 57),
+    (_v("1.21.4"), 61),
+    (_v("1.21.5"), 71),
+    (_v("1.21.6"), 80),
+    (_v("1.21.7"), 81),
+    (_v("26.1"), 88),
+)
+
+
+def datapack_format_for(version: McVersion) -> int | None:
+    """Version-exact data-pack ``pack_format`` (highest floor <= ``version``)."""
+    match: int | None = None
+    for floor, fmt in _DATAPACK_FORMATS:
+        if floor <= version:
+            match = fmt
+        else:
+            break
+    return match
+
+
 def block_of(version: McVersion) -> Block | None:
     """The block ``version`` falls in, or ``None`` if below the oldest block."""
     for block in _BLOCKS:
@@ -171,7 +207,7 @@ def resolve_profile(version: str) -> VersionProfile:
         recipe_path=block.recipe_path,
         tag_path=block.tag_path,
         tag_namespace=block.tag_namespace,
-        datapack_format=block.datapack_format,
+        datapack_format=datapack_format_for(parsed) or block.datapack_format,
         runner_supported=block.runner_supported,
     )
 

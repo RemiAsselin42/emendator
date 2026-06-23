@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Version-exact datapack `pack_format`.** Generated override datapacks now carry the
+  resolved version's exact `pack_format` instead of a coarse block-level value, so a pack
+  written for e.g. 1.19.2 is no longer tagged "made for a newer version" and refused on load
+  (`app/profile.py`).
+
 ## [0.1.1] — 2026-06-22
 
 ### Added
