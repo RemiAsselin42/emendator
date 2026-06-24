@@ -34,8 +34,9 @@ _LOADER_NAMES: dict[Loader, str] = {
 }
 
 # Loader/platform pseudo-dependencies that aren't installable mods — the server
-# flags them as "missing" the same way, but there's nothing to fetch.
-_NOT_INSTALLABLE = frozenset(
+# flags them as "missing" the same way, but there's nothing to fetch. Public so the
+# install orchestrator can gate the CurseForge fallback on the same set.
+NOT_INSTALLABLE = frozenset(
     {"minecraft", "java", "fabricloader", "fabric-loader", "quilt_loader", "forge", "neoforge"}
 )
 
@@ -131,7 +132,7 @@ def find_install(mod_id: str, loader: Loader, game_version: str) -> dict[str, An
     Returns ``None`` when the loader isn't supported, the id is a platform
     pseudo-dependency (Minecraft/Java/the loader itself), or nothing matches.
     """
-    if loader not in _LOADER_NAMES or mod_id in _NOT_INSTALLABLE:
+    if loader not in _LOADER_NAMES or mod_id in NOT_INSTALLABLE:
         return None
     slug = _INSTALL_ALIASES.get(mod_id, mod_id)
     title = slug
@@ -145,6 +146,31 @@ def find_install(mod_id: str, loader: Loader, game_version: str) -> dict[str, An
     if not versions:
         return None
     return _primary_file(versions[0], title)
+
+
+def probe_project(mod_id: str, loader: Loader) -> dict[str, Any] | None:
+    """Resolve ``mod_id`` to its Modrinth project, ignoring version compatibility.
+
+    Used only to craft a precise not-found message after :func:`find_install` failed:
+    returns ``{slug, title, url}`` when the project exists at all — so the caller can
+    say "exists, but no build for <version>" and link straight to it — or ``None``.
+    Slug-exact only: a fuzzy match here would risk pointing at the wrong project, and
+    a *compatible* fuzzy hit would have been installed already.
+    """
+    if loader not in _LOADER_NAMES or mod_id in NOT_INSTALLABLE:
+        return None
+    slug = _INSTALL_ALIASES.get(mod_id, mod_id)
+    project = _api_get(f"/v2/project/{slug}")
+    if not isinstance(project, dict) or not isinstance(project.get("id"), str):
+        return None
+    found = project.get("slug")
+    found = found if isinstance(found, str) and found else slug
+    title = project.get("title")
+    return {
+        "slug": found,
+        "title": title if isinstance(title, str) and title else found,
+        "url": f"https://modrinth.com/mod/{found}",
+    }
 
 
 def _project_versions(

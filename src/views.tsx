@@ -1,4 +1,5 @@
 import {
+  Fragment,
   type ReactNode,
   type RefObject,
   useCallback,
@@ -17,6 +18,7 @@ import type {
   Loader,
   Mod,
   ModEnvironment,
+  ProviderLink,
   RegistryIndex,
   ResolutionTargets,
   ResolutionVariants,
@@ -25,7 +27,6 @@ import type {
   RunVerdict,
   ScanResult,
   Severity,
-  ShaderPack,
 } from "./lib/api";
 import {
   applyResolution,
@@ -62,6 +63,8 @@ import {
   resolutionNote,
   SEVERITY_ORDER,
 } from "./lib/conflicts";
+import { useAccordion } from "./lib/useAccordion";
+import { useViewportFill } from "./lib/useViewportFill";
 import type { ResolutionSub } from "./useScanSession";
 
 interface TestProps {
@@ -77,7 +80,7 @@ function TestButton({ onTest, testing, disabled }: TestProps & { disabled?: bool
   );
 }
 
-export function Overview({
+export function Mods({
   result,
   updatedJars,
   onUpdated,
@@ -257,6 +260,8 @@ export function ConflictsView({
       return next;
     });
 
+  const fillGroups = useViewportFill();
+
   const rows = conflicts.filter((c) => visible.has(c.severity));
   const mixinExports = useMemo(() => (verdict ? new Set(verdict.mixinExports) : null), [verdict]);
 
@@ -266,6 +271,9 @@ export function ConflictsView({
     cons,
     rows: rows.filter((c) => conflictConsequence(c) === cons),
   })).filter((g) => g.rows.length > 0);
+
+  // One bucket open at a time (accordion); start on the most severe present.
+  const acc = useAccordion(groups[0]?.cons);
 
   return (
     <div className="view">
@@ -285,10 +293,10 @@ export function ConflictsView({
       {rows.length === 0 ? (
         <p className="note">No conflicts at the selected severities.</p>
       ) : (
-        <div className="conflict-groups">
+        <div className="conflict-groups" ref={fillGroups}>
           {groups.map((g) => (
-            // Benign noise starts collapsed; blocking/override stay open.
-            <details key={g.cons} className="conflict-group" open={g.cons !== "benign"}>
+            // Accordion: one bucket open at a time (opening one closes the others).
+            <details key={g.cons} className="conflict-group" {...acc.item(g.cons)}>
               <summary className="group-head">
                 <Chevron />
                 <span className="group-name">{CONSEQUENCE_LABEL[g.cons]}</span>
@@ -1015,24 +1023,45 @@ function installRowTitle(state: InstallState, msg: string | null, modId: string)
   }
 }
 
+const PROVIDER_LABEL: Record<ProviderLink["provider"], string> = {
+  modrinth: "Modrinth",
+  curseforge: "CurseForge",
+};
+
+// Modrinth / CurseForge search pages for a dependency id — the manual fallback
+// when neither provider auto-resolved it (often it exists, just not for the pack's
+// loader + MC version, so the user picks a build by hand and drops it in).
+function searchUrls(modId: string): Record<ProviderLink["provider"], string> {
+  const q = encodeURIComponent(modId);
+  return {
+    modrinth: `https://modrinth.com/mods?q=${q}`,
+    curseforge: `https://www.curseforge.com/minecraft/search?search=${q}`,
+  };
+}
+
 // One missing dependency: its id and a download-icon button driven by the panel's
-// state (so "Install all" and per-row clicks share one source of truth).
+// state (so "Install all" and per-row clicks share one source of truth). When a
+// dep couldn't be resolved (warn/error), offer manual search links as a way out.
 function InstallRow({
   modId,
   state,
   msg,
+  links,
   disabled,
   onInstall,
 }: {
   modId: string;
   state: InstallState;
   msg: string | null;
+  links: ProviderLink[];
   disabled: boolean;
   onInstall: (modId: string) => void;
 }) {
   // Reuse the mod-update button class names; only the icon set differs by phase.
   const btnState = state === "installing" ? "updating" : state === "installed" ? "done" : state;
   const title = installRowTitle(state, msg, modId);
+  const unresolved = state === "warn" || state === "error";
+  const urls = searchUrls(modId);
 
   return (
     <li className="missing-row">
@@ -1048,6 +1077,32 @@ function InstallRow({
         <StatusIcon phase={installPhase(state)} />
       </button>
       {msg && <span className="note missing-msg">{msg}</span>}
+      {unresolved &&
+        (links.length > 0 ? (
+          // The project exists, just not for this loader/version — link straight to it.
+          <span className="note missing-links">
+            Open:{" "}
+            {links.map((link, i) => (
+              <Fragment key={link.provider}>
+                {i > 0 && " · "}
+                <a href={link.url ?? urls[link.provider]} target="_blank" rel="noreferrer">
+                  {PROVIDER_LABEL[link.provider]}
+                </a>
+              </Fragment>
+            ))}
+          </span>
+        ) : (
+          <span className="note missing-links">
+            Find it manually:{" "}
+            <a href={urls.modrinth} target="_blank" rel="noreferrer">
+              Modrinth
+            </a>
+            {" · "}
+            <a href={urls.curseforge} target="_blank" rel="noreferrer">
+              CurseForge
+            </a>
+          </span>
+        ))}
     </li>
   );
 }
@@ -1072,6 +1127,8 @@ function MissingDepsPanel({
 }) {
   const [states, setStates] = useState<Record<string, InstallState>>({});
   const [msgs, setMsgs] = useState<Record<string, string | null>>({});
+  // Direct project links a not_found carries (provider has it, just not for this build).
+  const [linksById, setLinksById] = useState<Record<string, ProviderLink[]>>({});
   const [installingAll, setInstallingAll] = useState(false);
   // One re-test per panel: it remounts on each new verdict (keyed in TestView).
   const retested = useRef(false);
@@ -1090,6 +1147,7 @@ function MissingDepsPanel({
             ? `${r.jar} (${r.version})`
             : (r.jar ?? "installed")
           : (r.message ?? r.status);
+      setLinksById((p) => ({ ...p, [id]: r.links ?? [] }));
       setStates((p) => ({ ...p, [id]: next }));
       setMsgs((p) => ({ ...p, [id]: note }));
       return r.status === "installed";
@@ -1140,9 +1198,10 @@ function MissingDepsPanel({
         {remaining} remaining to install.
       </p>
       <p className="note">
-        The flagged dependencies can be installed from Modrinth. Click the download icon to install
-        one, or "Install all" to batch the installation. The test will auto re-run after every dep
-        installation attempt, and will confirm the fix.
+        The flagged dependencies are fetched from Modrinth, then CurseForge. Click the download icon
+        to install one, or "Install all" to batch the installation. The test auto re-runs after
+        every attempt to confirm the fix. If neither provider has a match (often the mod just isn't
+        published for this loader + MC version), use the search links to find and add it manually.
       </p>
       {remaining > 0 && (
         <button
@@ -1163,6 +1222,7 @@ function MissingDepsPanel({
             modId={id}
             state={states[id] ?? "idle"}
             msg={msgs[id] ?? null}
+            links={linksById[id] ?? []}
             disabled={installingAll}
             onInstall={install}
           />
@@ -1206,7 +1266,7 @@ function VerdictCause({ cause, onResolve }: { cause: RunCause; onResolve: () => 
       )}
       {cause.category === "missing_dependency" && cause.mods.length > 0 && (
         <button type="button" className="btn-secondary resolve-handoff" onClick={onResolve}>
-          Install in Resolution › Deps →
+          Fix missing dependencies
         </button>
       )}
     </>
@@ -1252,7 +1312,7 @@ function TestView({
   onResolve: () => void;
 } & TestProps) {
   return (
-    <div className="view">
+    <div className={`view${verdict ? "" : " view-centered"}`}>
       {!runnerSupported && <RunnerUnsupported block={block} />}
       <section className="runner">
         <TestButton onTest={onTest} testing={testing} disabled={!runnerSupported} />
@@ -1314,7 +1374,7 @@ function BisectView({
   block: string | null;
 }) {
   return (
-    <div className="view">
+    <div className={`view${bisectResult ? "" : " view-centered"}`}>
       {!runnerSupported && <RunnerUnsupported block={block} />}
       <section className="runner">
         <button
@@ -1440,6 +1500,7 @@ function OverrideRow({ c, unit }: { c: Conflict; unit: string }) {
 // Override groups (resource-pack assets / datapack data shared by ≥2 packs),
 // windowed so a pack with many collisions doesn't flood the DOM.
 function OverrideList({ conflicts, unit }: { conflicts: Conflict[]; unit: string }) {
+  const fillList = useViewportFill();
   if (conflicts.length === 0) return null;
   return (
     <VirtualList
@@ -1448,6 +1509,7 @@ function OverrideList({ conflicts, unit }: { conflicts: Conflict[]; unit: string
       estimate={OVERRIDE_ESTIMATE}
       gap={8}
       className="conflict-groups"
+      scrollRef={fillList}
       renderItem={(c) => <OverrideRow c={c} unit={unit} />}
     />
   );
@@ -1460,59 +1522,124 @@ export function ResourcePacksView({
   packs: ResourcePack[];
   conflicts: Conflict[];
 }) {
+  // Two sub-tabs: the packs themselves, and the asset overrides between them.
+  const [sub, setSub] = useState<"packs" | "overrides">("packs");
   return (
     <div className="view">
-      {conflicts.length > 0 && (
-        <p className="note">
-          {conflicts.length} asset override{conflicts.length > 1 ? "s" : ""} — when packs share a
-          file, load order decides which one wins.
-        </p>
-      )}
-      <OverrideList conflicts={conflicts} unit="assets" />
-      <div className="pack-list">
-        {packs.map((p) => (
-          <article className="pack-card" key={p.name}>
-            <header className="pack-card-head">
-              <h3 className="pack-name">{p.name}</h3>
-              <span className="pack-source">{p.source}</span>
-            </header>
-            <p className="note">
-              {p.assetCount} assets
-              {p.packFormat != null && ` · format ${p.packFormat}`}
-            </p>
-            {p.description && <p className="pack-desc">{p.description}</p>}
-          </article>
-        ))}
+      <div className="subtabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={sub === "packs"}
+          className={sub === "packs" ? "chip chip-on" : "chip"}
+          onClick={() => setSub("packs")}
+        >
+          Resource packs ({packs.length})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={sub === "overrides"}
+          className={sub === "overrides" ? "chip chip-on" : "chip"}
+          onClick={() => setSub("overrides")}
+        >
+          Asset overrides ({conflicts.length})
+        </button>
       </div>
+
+      {sub === "packs" ? (
+        packs.length === 0 ? (
+          <p className="note">No resource packs.</p>
+        ) : (
+          <div className="pack-list">
+            {packs.map((p) => (
+              <article className="pack-card" key={p.name}>
+                <header className="pack-card-head">
+                  <h3 className="pack-name">{p.name}</h3>
+                  <span className="pack-source">{p.source}</span>
+                </header>
+                <p className="note">
+                  {p.assetCount} assets
+                  {p.packFormat != null && ` · format ${p.packFormat}`}
+                </p>
+                {p.description && <p className="pack-desc">{p.description}</p>}
+              </article>
+            ))}
+          </div>
+        )
+      ) : conflicts.length === 0 ? (
+        <p className="note note-ok">No asset overrides.</p>
+      ) : (
+        <>
+          <p className="note">
+            {conflicts.length} asset override{conflicts.length > 1 ? "s" : ""} — when packs share a
+            file, load order decides which one wins.
+          </p>
+          <OverrideList conflicts={conflicts} unit="assets" />
+        </>
+      )}
     </div>
   );
 }
 
 export function DatapacksView({ packs, conflicts }: { packs: Datapack[]; conflicts: Conflict[] }) {
+  // Two sub-tabs: the datapacks themselves, and the overrides between them.
+  const [sub, setSub] = useState<"packs" | "overrides">("packs");
   return (
     <div className="view">
-      {conflicts.length > 0 && (
-        <p className="note">
-          {conflicts.length} datapack override{conflicts.length > 1 ? "s" : ""} - two datapacks ship
-          the same recipe/loot/tag; load order decides.
-        </p>
-      )}
-      <OverrideList conflicts={conflicts} unit="files" />
-      <div className="pack-list">
-        {packs.map((p) => (
-          <article className="pack-card" key={`${p.location}/${p.name}`}>
-            <header className="pack-card-head">
-              <h3 className="pack-name">{p.name}</h3>
-              <span className="pack-source">{p.location}</span>
-            </header>
-            <p className="note">
-              {p.dataCount} files
-              {p.packFormat != null && ` · format ${p.packFormat}`}
-            </p>
-            {p.description && <p className="pack-desc">{p.description}</p>}
-          </article>
-        ))}
+      <div className="subtabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={sub === "packs"}
+          className={sub === "packs" ? "chip chip-on" : "chip"}
+          onClick={() => setSub("packs")}
+        >
+          Datapacks ({packs.length})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={sub === "overrides"}
+          className={sub === "overrides" ? "chip chip-on" : "chip"}
+          onClick={() => setSub("overrides")}
+        >
+          Datapack overrides ({conflicts.length})
+        </button>
       </div>
+
+      {sub === "packs" ? (
+        packs.length === 0 ? (
+          <p className="note">No datapacks.</p>
+        ) : (
+          <div className="pack-list">
+            {packs.map((p) => (
+              <article className="pack-card" key={`${p.location}/${p.name}`}>
+                <header className="pack-card-head">
+                  <h3 className="pack-name">{p.name}</h3>
+                  <span className="pack-source">{p.location}</span>
+                </header>
+                <p className="note">
+                  {p.dataCount} files
+                  {p.packFormat != null && ` · format ${p.packFormat}`}
+                </p>
+                {p.description && <p className="pack-desc">{p.description}</p>}
+              </article>
+            ))}
+          </div>
+        )
+      ) : conflicts.length === 0 ? (
+        <p className="note note-ok">No datapack overrides.</p>
+      ) : (
+        <>
+          <p className="note">
+            {conflicts.length} datapack override
+            {conflicts.length > 1 ? "s" : ""} — two datapacks ship the same recipe/loot/tag; load
+            order decides.
+          </p>
+          <OverrideList conflicts={conflicts} unit="files" />
+        </>
+      )}
     </div>
   );
 }
@@ -1569,7 +1696,7 @@ export function ItemsView({ index }: { index: RegistryIndex }) {
       </div>
       <p className="note mods-count">
         {filtered.length} of {index.total}
-        {filtered.length > ITEM_CAP ? ` · showing first ${ITEM_CAP}` : ""}
+        {filtered.length > ITEM_CAP ? ` · Showing the first ${ITEM_CAP}` : ""}
       </p>
       {shown.length === 0 ? (
         <p className="note">No items match the current filters.</p>
@@ -1584,26 +1711,6 @@ export function ItemsView({ index }: { index: RegistryIndex }) {
           ))}
         </ul>
       )}
-    </div>
-  );
-}
-
-export function ShadersView({ packs }: { packs: ShaderPack[] }) {
-  return (
-    <div className="view">
-      <p className="note">
-        Shader packs are opaque to static analysis — listed for inventory only.
-      </p>
-      <div className="pack-list">
-        {packs.map((p) => (
-          <article className="pack-card" key={p.name}>
-            <header className="pack-card-head">
-              <h3 className="pack-name">{p.name}</h3>
-              <span className="pack-source">{p.source}</span>
-            </header>
-          </article>
-        ))}
-      </div>
     </div>
   );
 }
@@ -1915,54 +2022,20 @@ function MixinResolver({
     }
   };
 
+  // The two lists are accordion panels (one open at a time), so each can fill the
+  // viewport when it's the open one — they never compete. `climb` lets the open
+  // list reserve room for the *other* panel's header (a sibling of its <details>,
+  // not of the list), keeping both headers on screen.
+  const fillActionable = useViewportFill(true);
+  const fillBroad = useViewportFill(true);
+  // Accordion: open the actionable list by default, or the broad bucket if it's all
+  // there is. Opening one collapses the other.
+  const acc = useAccordion(actionable.length > 0 ? "actionable" : "broad");
+
   if (clusters.length === 0) return null;
   const cardProps = { modsPath, version, updatedJars, onUpdated };
   return (
     <section className="mixin-resolver">
-      <h2 className="resolution-section">Mixin conflicts</h2>
-      {actionable.length > 0 ? (
-        <>
-          <p className="note">
-            {actionable.length} likely mixin conflict
-            {actionable.length > 1 ? "s" : ""}. For each conflict, either update one mod to a
-            compatible build (if offered) or enable only one of the conflicting mods (reversible).
-            Then re-test to confirm the fix.
-          </p>
-          <VirtualList
-            items={actionable}
-            keyOf={(c) => c.key}
-            estimate={MIXIN_CARD_ESTIMATE}
-            gap={8}
-            className="conflict-groups"
-            renderItem={(c) => <MixinConflictCard cluster={c} {...cardProps} />}
-          />
-        </>
-      ) : (
-        <p className="note">
-          No likely pairwise mixin conflicts — only the broad co-patches below, which are usually
-          harmless.
-        </p>
-      )}
-
-      {broad.length > 0 && (
-        <details className="mixin-broad-section">
-          <summary className="group-head">
-            <Chevron />
-            <span className="group-name">Broad co-patches</span>
-            <span className="group-count">· {broad.length}</span>
-            <span className="group-hint">many mods share a hot class — usually harmless</span>
-          </summary>
-          <VirtualList
-            items={broad}
-            keyOf={(c) => c.key}
-            estimate={MIXIN_BROAD_ESTIMATE}
-            gap={8}
-            className="conflict-groups"
-            renderItem={(c) => <MixinBroadCard cluster={c} {...cardProps} />}
-          />
-        </details>
-      )}
-
       <section className="runner">
         <button
           className="btn-secondary no-wrap"
@@ -1985,6 +2058,50 @@ function MixinResolver({
           </span>
         )}
       </section>
+      {actionable.length > 0 ? (
+        <details className="mixin-section" {...acc.item("actionable")}>
+          <summary className="group-head">
+            <Chevron />
+            <span className="group-name">Likely conflicts</span>
+            <span className="group-count">· {actionable.length}</span>
+            <span className="group-hint">Pairwise mixin clashes worth resolving</span>
+          </summary>
+          <VirtualList
+            items={actionable}
+            keyOf={(c) => c.key}
+            estimate={MIXIN_CARD_ESTIMATE}
+            gap={8}
+            className="conflict-groups"
+            scrollRef={fillActionable}
+            renderItem={(c) => <MixinConflictCard cluster={c} {...cardProps} />}
+          />
+        </details>
+      ) : (
+        <p className="note">
+          No likely pairwise mixin conflicts — only the broad co-patches below, which are usually
+          harmless.
+        </p>
+      )}
+
+      {broad.length > 0 && (
+        <details className="mixin-broad-section" {...acc.item("broad")}>
+          <summary className="group-head">
+            <Chevron />
+            <span className="group-name">Broad co-patches</span>
+            <span className="group-count">· {broad.length}</span>
+            <span className="group-hint">Many mods share a hot class (usually harmless)</span>
+          </summary>
+          <VirtualList
+            items={broad}
+            keyOf={(c) => c.key}
+            estimate={MIXIN_BROAD_ESTIMATE}
+            gap={8}
+            className="conflict-groups"
+            scrollRef={fillBroad}
+            renderItem={(c) => <MixinBroadCard cluster={c} {...cardProps} />}
+          />
+        </details>
+      )}
     </section>
   );
 }

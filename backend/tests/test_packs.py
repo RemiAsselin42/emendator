@@ -4,7 +4,7 @@ import json
 import zipfile
 from pathlib import Path
 
-from app.analyzer.packs import scan_datapacks, scan_resourcepacks, scan_shaderpacks
+from app.analyzer.packs import scan_datapacks, scan_resourcepacks
 
 
 def _mcmeta(fmt: int, desc: str) -> str:
@@ -71,14 +71,6 @@ def test_datapack_override_across_world(tmp_path: Path) -> None:
     assert conflicts[0].members == ["world/DpA", "world/DpB.zip"]
 
 
-def test_shaderpacks_inventoried(tmp_path: Path) -> None:
-    (tmp_path / "ComplementaryShaders").mkdir()
-    (tmp_path / "BSL.zip").write_bytes(b"PK\x03\x04stub")
-    shaders = scan_shaderpacks(tmp_path)
-    assert {s.name for s in shaders} == {"ComplementaryShaders", "BSL.zip"}
-
-
 def test_missing_folder_is_empty() -> None:
     assert scan_resourcepacks(None) == ([], [])
     assert scan_datapacks([]) == ([], [])
-    assert scan_shaderpacks(None) == []

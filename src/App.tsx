@@ -1,7 +1,31 @@
+import { useEffect, useState } from "react";
 import { AppHeader, ContentTabPanel, CoreTabPanel, ScanTab, Sidebar } from "./AppChrome";
+import { CurseForgeConnect } from "./CurseForgeConnect";
+import { type CurseForgeStatus, getCurseForgeStatus } from "./lib/api";
+import { useExternalLinks } from "./lib/external";
+import { Settings } from "./Settings";
 import { useScanSession } from "./useScanSession";
 
 export default function App() {
+  useExternalLinks(); // route <a target="_blank"> through the OS browser under Tauri
+
+  // CurseForge connection status lives here so the connect prompt and the Settings
+  // panel share one source of truth — a change in either updates both at once.
+  const [cfStatus, setCfStatus] = useState<CurseForgeStatus | null>(null);
+  useEffect(() => {
+    let alive = true;
+    getCurseForgeStatus()
+      .then((s) => {
+        if (alive) setCfStatus(s);
+      })
+      .catch(() => {
+        // Backend not reachable yet — the backend-down toast already covers that.
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const session = useScanSession();
   const {
     backendDown,
@@ -38,6 +62,8 @@ export default function App() {
 
   return (
     <main className="container">
+      <Settings status={cfStatus} onChanged={setCfStatus} />
+
       <AppHeader
         instance={instance}
         result={result}
@@ -108,6 +134,8 @@ export default function App() {
           <span className="toast-body">Retrying…</span>
         </div>
       )}
+
+      <CurseForgeConnect status={cfStatus} onChanged={setCfStatus} />
     </main>
   );
 }

@@ -7,7 +7,7 @@
   --color-background: #171917; /* green grey — global background */
   --color-surface: #404741; /* light green grey — borders + rare secondary surface */
   --color-text: #dde1de; /* grey white — text on dark */
-  --color-on-accent: #37323e; /* dark text on green accents */
+  --color-on-accent: #171917; /* dark text on green accents */
   --color-warn: #e3b341; /* amber — soft outcomes (no update / not on provider) */
   --color-error: #e5534b; /* red — hard failures (update actually failed) */
 
@@ -18,6 +18,8 @@
   --space-sm: 8px;
   --space-md: 16px;
   --space-lg: 24px;
+  --space-xl: 32px;
+  --space-xxl: 48px;
   --border: 2px solid var(--color-surface);
   --transition: all 0.3s ease;
 
@@ -93,7 +95,7 @@ a:hover {
 .container {
   max-width: 1080px;
   margin: 0 auto;
-  padding: var(--space-lg) var(--space-lg) var(--space-md);
+  padding: var(--space-lg);
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
@@ -163,6 +165,180 @@ a:hover {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* CurseForge connect prompt: the same fixed corner card as the sidecar toast, but
+   clickable (it opens the connect modal) and gold-accented rather than error red.
+   Resets the <button> chrome so it reads as the card, not a control. */
+.toast-cta {
+  text-align: left;
+  width: auto;
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  cursor: pointer;
+  border-color: var(--color-primary);
+}
+
+.toast-cta:hover {
+  border-color: var(--color-secondary);
+}
+
+.toast-title-cta {
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+/* Connect modal: a centered dialog over a dimming overlay. Single bordered
+   surface (DESIGN.md: borders over shadows), gold title. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+  background: rgba(0, 0, 0, 0.6);
+  animation: toast-in 0.2s ease;
+}
+
+.modal {
+  position: relative;
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  background: var(--color-background);
+  border: var(--border);
+  border-radius: var(--radius);
+}
+
+/* Close cross: top-right corner of the modal, gold on hover (single-accent rule). */
+.modal-close {
+  position: absolute;
+  top: var(--space-md);
+  right: var(--space-md);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-sm);
+  background: none;
+  color: var(--color-text);
+  opacity: 0.6;
+  cursor: pointer;
+  transition: var(--transition);
+  border: var(--border);
+}
+
+.modal-close:hover {
+  opacity: 1;
+  color: var(--color-primary);
+}
+
+.modal-title {
+  color: var(--color-primary);
+}
+
+.modal-body {
+  margin: 0;
+  font-size: 1rem;
+  opacity: 0.9;
+}
+
+.modal-steps {
+  margin: 0;
+  padding-left: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  font-size: 1rem;
+}
+
+.modal-note {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.modal-note-warn {
+  color: var(--color-warn);
+}
+
+.modal-actions {
+  display: flex;
+  gap: var(--space-md);
+  justify-content: flex-end;
+}
+
+/* Low-emphasis text button under the actions: dismiss the prompt for good. */
+.modal-dismiss {
+  align-self: center;
+  background: none;
+  border: none;
+  color: var(--color-text);
+  opacity: 0.6;
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  text-decoration: underline;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.modal-dismiss:hover {
+  opacity: 1;
+}
+
+/* Settings gear: fixed top-right, always reachable. Bordered icon button, gold on
+   hover (matches the design's single-accent rule). */
+.settings-fab {
+  position: fixed;
+  top: var(--space-md);
+  right: var(--space-md);
+  z-index: 15;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-sm);
+  background: var(--color-background);
+  border: var(--border);
+  border-radius: var(--radius);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.settings-fab:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.settings-heading {
+  color: var(--color-text);
+  font-size: 1.25rem;
+}
+
+/* Destructive secondary action (e.g. Remove key): red outline that stays red on
+   hover, overriding the secondary button's gold hover. */
+.btn-danger,
+.btn-danger:hover {
+  border-color: var(--color-error);
+  background: none;
+}
+
+.btn-secondary.btn-danger:hover {
+  color: var(--color-error);
+}
+
+.btn-primary.btn-danger:hover {
+  color: var(--color-error);
 }
 
 /* Drop target for the mods/ folder. */
@@ -314,18 +490,21 @@ a:hover {
   opacity: 0.7;
 }
 
-/* Content-pack cards (resource packs / datapacks / shaders): same bordered card
+/* Content-pack cards (resource packs / datapacks): same bordered card
    language as mods, in a responsive grid. */
 .pack-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: var(--space-md);
   margin-top: var(--space-md);
+  max-height: calc(100vh - 20em);
+  overflow: auto;
 }
 
 .pack-card {
   display: flex;
   flex-direction: column;
+  justify-content: space-between;
   gap: var(--space-sm);
   padding: var(--space-md);
   border: var(--border);
@@ -334,15 +513,20 @@ a:hover {
 
 .pack-card-head {
   display: flex;
+  flex-direction: column;
   align-items: baseline;
   justify-content: space-between;
-  gap: var(--space-md);
+  gap: var(--space-sm);
 }
 
 .pack-name {
   font-size: 1.125rem;
   line-height: 1.2;
-  word-break: break-word;
+
+  width: 100%;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .pack-source {
@@ -361,10 +545,12 @@ a:hover {
 /* Item index: one compact row per registered item/block. */
 .item-list {
   list-style: none;
-  margin: var(--space-md) 0 0;
+  margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
+  max-height: calc(100vh - 20em - var(--space-md));
+  overflow: auto;
 }
 
 .item-row {
@@ -425,11 +611,7 @@ a:hover {
   padding: var(--space-md);
 }
 
-/* Mods tab fills the viewport so only the card list scrolls, not the page.
-   The 12rem offset covers the header + container padding above the view; the
-   controls/count/notes keep their natural height and the list takes the rest. */
 .view-mods {
-  height: calc(100dvh - 13rem);
   min-height: 320px;
 }
 
@@ -461,6 +643,7 @@ a:hover {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  max-height: calc(100vh - 20em - var(--space-md));
 }
 
 .vlist-track {
@@ -787,7 +970,7 @@ a:hover {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: var(--space-md);
   margin-top: var(--space-sm);
-  max-height: calc(100vh - 36em);
+  max-height: calc(100vh - 34em);
   overflow: auto;
 }
 
@@ -895,6 +1078,7 @@ a:hover {
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
+  height: 100%;
 }
 
 .panel-content {
@@ -906,6 +1090,14 @@ a:hover {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+}
+
+.view-centered {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin: var(--space-xxl) auto;
 }
 
 /* Severity filter chips. Active chip = gold border + its severity color. */
@@ -968,17 +1160,16 @@ a:hover {
   color: var(--color-secondary);
 }
 
-/* --- Conflict map: grouped by consequence (§9) --------------------------
-   No table. Each bucket is a <details> separated by a border; rows are
-   compact two-line cards, the heavy `detail` payload hidden behind a nested
-   <details>. One background everywhere, gold only on the runtime/missing
-   signals — per DESIGN.md. */
 .conflict-groups {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
-  max-height: calc(100vh - 35em);
   overflow: auto;
+  margin-top: var(--space-sm);
+  /* useViewportFill sets an exact inline `max-height` (viewport minus the list's
+     top offset, the siblings below it, and --vfill-trim) during commit, before first
+     paint. This value is only a safety net if that script never runs. */
+  max-height: calc(100dvh - 20em);
 }
 
 .conflict-group {
@@ -1004,6 +1195,10 @@ a:hover {
   padding: var(--space-sm) var(--space-md);
 }
 
+.mixin-section > .group-head,
+.mixin-broad-section > .group-head {
+  padding-left: 0;
+}
 .group-name {
   font-weight: 600;
 }
@@ -1142,7 +1337,7 @@ a:hover {
 .runner {
   display: flex;
   align-items: center;
-  gap: var(--space-md);
+  gap: var(--space-sm);
 }
 
 /* Runtime verdict status colors. */
@@ -1209,6 +1404,7 @@ a:hover {
 .missing-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-sm);
 }
 
@@ -1221,18 +1417,25 @@ a:hover {
   word-break: break-word;
 }
 
+/* Manual-resolution handoff: search links shown when a dep couldn't be auto-fetched. */
+.missing-links {
+  white-space: nowrap;
+}
+
 /* Severity: gold is the conflict signal (DESIGN.md), reserved for errors. */
 .sev-error {
-  color: var(--color-primary);
+  color: var(--color-error);
+  border: 2px solid var(--color-error);
   font-weight: 600;
 }
 
 .sev-warning {
-  color: var(--color-secondary);
+  color: var(--color-warn);
+  border: 2px solid var(--color-warn);
 }
 
 .sev-info {
-  opacity: 0.6;
+  color: var(--color-primary);
 }
 
 .note {
@@ -1240,12 +1443,17 @@ a:hover {
   opacity: 0.8;
 }
 
+.note-ok {
+  color: var(--color-primary);
+  text-align: center;
+  opacity: 1;
+}
+
 /* --- Mixin resolver (Resolution tab) ------------------------------------- */
 .mixin-resolver {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
-  margin-bottom: var(--space-lg);
 }
 
 /* Section divider between the mixin resolver and the generated-config block. */
@@ -1313,20 +1521,24 @@ a:hover {
   list-style: none;
 }
 
-/* The collapsed bucket that folds away the broad co-patches (the noise). */
+.mixin-section,
 .mixin-broad-section {
-  margin-top: var(--space-sm);
+  border: var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-sm) var(--space-md);
+  display: flex;
+  flex-direction: column;
 }
 
+.mixin-section[open] > .group-head .chevron,
 .mixin-broad-section[open] > .group-head .chevron {
   transform: rotate(180deg);
 }
 
 /* Runtime → Resolution handoff under a missing-dependency verdict. */
 .resolve-handoff {
-  margin-top: var(--space-sm);
+  margin-top: var(--space-md);
   align-self: flex-start;
-  padding: 4px var(--space-sm);
 }
 
 /* An inline word inside a .note that acts as a link (e.g. "Runtime" jumping to
@@ -1349,7 +1561,7 @@ a:hover {
 /* --- Resolution selection cards (Recipes / Tags) ------------------------- */
 /* Bounded, virtualized scroll region (reuses .vlist-track / .vlist-item). */
 .sel-list {
-  max-height: calc(100dvh - 26rem);
+  max-height: calc(100dvh - 20em - var(--space-md));
   min-height: 200px;
   overflow-y: auto;
 }

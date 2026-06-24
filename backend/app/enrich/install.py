@@ -21,8 +21,11 @@ from pathlib import Path
 
 import httpx
 
-from app.enrich import modrinth
-from app.models import DisableResult, InstallResult, Loader, UpdateResult
+from app.config import settings
+from app.enrich import curseforge, modrinth
+from app.models import DisableResult, InstallResult, Loader, ProviderLink, UpdateResult
+
+_PROVIDER_LABEL = {"modrinth": "Modrinth", "curseforge": "CurseForge"}
 
 _UA = "emendator/0.1 (modpack analyzer)"
 _TIMEOUT = httpx.Timeout(60.0, connect=10.0)
@@ -74,12 +77,13 @@ def update_mod(mods_dir: Path, jar: str, loader: Loader, game_version: str) -> U
 
 
 def install_mod(mods_dir: Path, mod_id: str, loader: Loader, game_version: str) -> InstallResult:
-    """Add the missing dependency ``mod_id`` to ``mods_dir`` from Modrinth.
+    """Add the missing dependency ``mod_id`` to ``mods_dir`` from Modrinth (else CurseForge).
 
     Resolves the latest matching version for the pack's loader + MC version,
-    verifies its sha1 and writes it in. Returns ``not_found`` when nothing on
-    Modrinth matches (or the id is a platform pseudo-dependency), and is a no-op
-    on the folder for any failure.
+    verifies its sha1 and writes it in. Modrinth is tried first; when it has no
+    match and a CurseForge API key is configured, CurseForge is tried as a
+    fallback. Returns ``not_found`` when neither provider matches (or the id is a
+    platform pseudo-dependency), and is a no-op on the folder for any failure.
     """
     # A dependency that's only disabled (renamed ``.jar.disabled``) is restored by
     # dropping the suffix — no download, the exact jar/version the pack already had.
@@ -99,11 +103,13 @@ def install_mod(mods_dir: Path, mod_id: str, loader: Loader, game_version: str) 
             message="Re-enabled a disabled mod (no download).",
         )
 
+    from_curseforge = False
     info = modrinth.find_install(mod_id, loader, game_version)
+    if info is None and settings.curseforge_api_key:
+        info = curseforge.find_install(mod_id, loader, game_version, settings.curseforge_api_key)
+        from_curseforge = info is not None
     if info is None:
-        return InstallResult(
-            status="not_found", mod_id=mod_id, message="No Modrinth match for this dependency."
-        )
+        return _resolve_not_found(mod_id, loader, game_version)
 
     filename = info["filename"]
     dest = mods_dir / filename
@@ -132,7 +138,44 @@ def install_mod(mods_dir: Path, mod_id: str, loader: Loader, game_version: str) 
         return InstallResult(status="error", mod_id=mod_id, message=f"Could not install: {exc}")
 
     return InstallResult(
-        status="installed", mod_id=mod_id, jar=filename, version=info.get("version_number")
+        status="installed",
+        mod_id=mod_id,
+        jar=filename,
+        version=info.get("version_number"),
+        message="Installed from CurseForge." if from_curseforge else None,
+    )
+
+
+def _resolve_not_found(mod_id: str, loader: Loader, game_version: str) -> InstallResult:
+    """A precise not_found: probe each provider (ignoring the version filter).
+
+    Distinguishes "the project exists but has no build for the pack's loader + MC
+    version" — carrying a direct link to it — from "found nowhere", where the front
+    falls back to a manual search. Only runs on the failure path, so the extra
+    lookups are cheap.
+    """
+    links: list[ProviderLink] = []
+    hit = modrinth.probe_project(mod_id, loader)
+    if hit is not None:
+        links.append(ProviderLink(provider="modrinth", title=hit["title"], url=hit.get("url")))
+    key = settings.curseforge_api_key
+    if key:
+        hit = curseforge.probe_project(mod_id, loader, key)
+        if hit is not None:
+            links.append(
+                ProviderLink(provider="curseforge", title=hit["title"], url=hit.get("url"))
+            )
+
+    if links:
+        where = " and ".join(_PROVIDER_LABEL[link.provider] for link in links)
+        message = f"{links[0].title} is on {where}, but has no build for {loader} {game_version}."
+        return InstallResult(status="not_found", mod_id=mod_id, message=message, links=links)
+
+    searched = "Modrinth or CurseForge" if key else "Modrinth"
+    return InstallResult(
+        status="not_found",
+        mod_id=mod_id,
+        message=f"Not found on {searched} — check the spelling, or that it's still published.",
     )
 
 

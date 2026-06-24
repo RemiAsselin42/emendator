@@ -5,15 +5,18 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.analyzer.mods import read_jars_metadata, read_mods_metadata, scan_jars, scan_mods_folder
-from app.analyzer.packs import scan_datapacks, scan_resourcepacks, scan_shaderpacks
+from app.analyzer.packs import scan_datapacks, scan_resourcepacks
 from app.analyzer.registry_index import build_registry_index
 from app.config import settings
-from app.enrich import enrich_mods
+from app.credentials import load_into_settings, set_curseforge_key
+from app.enrich import curseforge, enrich_mods
 from app.enrich.install import disable_mod, enable_mod, install_mod, update_mod
 from app.models import (
     ApplyRequest,
     ApplyResult,
     BisectResult,
+    CurseForgeKeyRequest,
+    CurseForgeStatus,
     DisableRequest,
     DisableResult,
     ExportRequest,
@@ -53,6 +56,10 @@ from app.sources.discovery import discover_instances
 from app.sources.instance import detect_instance, mods_jars
 
 app = FastAPI(title="Emendator backend", version="0.1.0")
+
+# Fold a UI-stored CurseForge key (if any) into live settings before serving, so
+# the install fallback is armed without a restart. Env-provided keys still win.
+load_into_settings()
 
 app.add_middleware(
     CORSMiddleware,
@@ -182,13 +189,11 @@ def instance_scan(req: ScanRequest) -> InstanceReport:
         Path(folders.resourcepacks) if folders.resourcepacks else None
     )
     datapacks, dp_conflicts = scan_datapacks(folders.datapacks)
-    shaderpacks = scan_shaderpacks(Path(folders.shaderpacks) if folders.shaderpacks else None)
     return InstanceReport(
         instance=instance,
         mods=mods,
         resourcepacks=resourcepacks,
         datapacks=datapacks,
-        shaderpacks=shaderpacks,
         resourcepack_conflicts=rp_conflicts,
         datapack_conflicts=dp_conflicts,
         items=build_registry_index(jars),
@@ -220,6 +225,28 @@ def mods_install(req: InstallRequest) -> InstallResult:
     loader = req.loader or detect_loader(mods_dir)
     game_version = req.version or _resolve_for(mods_dir, None)[0].profile
     return install_mod(mods_dir, req.mod_id, loader, game_version)
+
+
+@app.get("/config/curseforge", response_model=CurseForgeStatus)
+def curseforge_status() -> CurseForgeStatus:
+    """Whether a CurseForge API key is configured (drives the front's connect prompt)."""
+    return CurseForgeStatus(configured=bool(settings.curseforge_api_key))
+
+
+@app.post("/config/curseforge", response_model=CurseForgeStatus)
+def curseforge_set_key(req: CurseForgeKeyRequest) -> CurseForgeStatus:
+    """Save (or clear) the CurseForge API key, then probe it for validity.
+
+    Persists the key so the install fallback can use it now and after a restart; a
+    blank key clears it. ``valid`` reflects a best-effort auth probe — the key is
+    saved either way (the user may be offline), so the front can word it softly.
+    """
+    set_curseforge_key(req.api_key)
+    key = settings.curseforge_api_key
+    if not key:
+        return CurseForgeStatus(configured=False)
+    valid, detail = curseforge.verify_key(key)
+    return CurseForgeStatus(configured=True, valid=valid, detail=detail)
 
 
 @app.post("/mods/disable", response_model=DisableResult)

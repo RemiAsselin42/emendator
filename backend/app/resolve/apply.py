@@ -53,7 +53,7 @@ def _mods_dir(instance: Instance, root: Path) -> Path:
 def _base_dir(instance: Instance) -> Path:
     """The pack base (where ``config/``, ``datapacks/`` and ``saves/`` live)."""
     folders = instance.folders
-    for candidate in (folders.config, folders.resourcepacks, folders.shaderpacks):
+    for candidate in (folders.config, folders.resourcepacks):
         if candidate:
             return Path(candidate).parent
     if folders.mods and instance.source != "raw_mods":

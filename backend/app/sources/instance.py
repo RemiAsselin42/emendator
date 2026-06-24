@@ -1,7 +1,7 @@
 """Resolve a dropped path into an :class:`Instance` (launcher-native ingestion).
 
 Emendator historically took a bare ``mods/`` folder. Launchers instead lay out a
-whole instance — ``mods/``, ``resourcepacks/``, ``shaderpacks/``, ``saves/`` —
+whole instance — ``mods/``, ``resourcepacks/``, ``saves/`` —
 next to a manifest that names the pack, loader and Minecraft version. This module
 recognises the common launchers from their manifest and locates those content
 sub-folders, so the rest of the pipeline can scan them uniformly. A folder that
@@ -170,13 +170,11 @@ def _build(
     """
     mods = mods_dir if mods_dir is not None else base / "mods"
     resourcepacks = base / "resourcepacks"
-    shaderpacks = base / "shaderpacks"
     config = base / "config"
     datapacks = _datapack_dirs(base)
     folders = InstanceFolders(
         mods=_dir_or_none(mods),
         resourcepacks=_dir_or_none(resourcepacks),
-        shaderpacks=_dir_or_none(shaderpacks),
         config=_dir_or_none(config),
         datapacks=datapacks,
     )
@@ -190,7 +188,6 @@ def _build(
         mod_count=_count_jars(mods),
         resourcepack_count=_count_packs(resourcepacks),
         datapack_count=sum(_count_packs(Path(d)) for d in datapacks),
-        shaderpack_count=_count_packs(shaderpacks),
     )
 
 
