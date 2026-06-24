@@ -13,6 +13,16 @@ export async function fetchHealth(): Promise<HealthResponse> {
   return res.json() as Promise<HealthResponse>;
 }
 
+/** Whether the Docker daemon is reachable. Throws if the backend itself is
+ *  unreachable (its own toast covers that), so callers can distinguish "Docker
+ *  down" from "backend down". */
+export async function fetchDockerStatus(): Promise<boolean> {
+  const res = await fetch(`${BASE}/runner/docker`);
+  if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+  const body = (await res.json()) as { available: boolean };
+  return body.available;
+}
+
 // --- Mod ingestion (conflict map, PROJECT.md §9) -------------------------
 
 export type ModEnvironment = "server" | "client" | "*";
@@ -137,8 +147,45 @@ export interface BisectResult {
   note: string | null;
 }
 
-export function bisectSet(path: string, version?: string): Promise<BisectResult> {
-  return postJson<BisectResult>("/runner/bisect", { path, version });
+/** Live bisection status (mirrors the backend `BisectProgress`), one per boot:
+ *  the phase, boots started so far, jars booting now, and candidates still in play. */
+export interface BisectProgress {
+  step: "full" | "reduce" | "confirm";
+  boots: number;
+  testing: number;
+  remaining: number;
+}
+
+type BisectStreamEvent =
+  | ({ phase: "progress" } & BisectProgress)
+  | { phase: "done"; result: BisectResult }
+  | { phase: "error"; message: string };
+
+/** Boot a crashing set and delta-debug it down to the minimal guilty subset,
+ *  reporting live per-boot progress through `onProgress` so the UI can show the
+ *  (variable-length) search is running and how far it has narrowed. */
+export async function bisectSetStream(
+  path: string,
+  version: string | undefined,
+  onProgress: (progress: BisectProgress) => void,
+): Promise<BisectResult> {
+  const res = await fetch(`${BASE}/runner/bisect/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, version }),
+  });
+  if (!res.ok) throw await httpError(res);
+
+  let result: BisectResult | null = null;
+  await consumeEventStream(res, (event) => {
+    const e = event as BisectStreamEvent;
+    if (e.phase === "progress")
+      onProgress({ step: e.step, boots: e.boots, testing: e.testing, remaining: e.remaining });
+    else if (e.phase === "done") result = e.result;
+    else throw new Error(e.message);
+  });
+  if (!result) throw new Error("Bisect stream ended without a result");
+  return result;
 }
 
 // --- Phase 4: no-code resolution (PROJECT.md §10, §12) -------------------
@@ -460,17 +507,54 @@ export async function discoverInstances(): Promise<Instance[]> {
   return res.json() as Promise<Instance[]>;
 }
 
-/** Scan an instance (launcher root or bare `mods/` folder) into a full report:
- *  the mod conflict map plus content-pack sections. Ambiguous version sets
- *  reject with 409 as {@link AmbiguousVersionError}; mods and content folders
- *  are located automatically. */
-export function scanInstance(path: string, version?: string): Promise<InstanceReport> {
-  return scanAt<InstanceReport>("/instance/scan", path, version);
+/** Progress callback for {@link scanInstanceStream}: a 0–100 percent and a short
+ *  human label for the phase currently running. */
+export type ScanProgress = (percent: number, label: string) => void;
+
+// One frame of the scan progress stream (SSE `data:` payload).
+type ScanStreamEvent =
+  | { phase: "progress"; percent: number; label: string }
+  | { phase: "done"; report: InstanceReport }
+  | { phase: "error"; message: string };
+
+/** Read a `text/event-stream` POST response, dispatching each decoded `data:`
+ *  JSON payload to `onEvent`. SSE frames are blank-line separated and may straddle
+ *  chunk boundaries, so the buffer is split on the delimiter. Shared by the scan
+ *  and bisect progress streams. */
+async function consumeEventStream(res: Response, onEvent: (event: unknown) => void): Promise<void> {
+  if (!res.body) throw new Error("Stream returned no body");
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const flush = (frame: string) => {
+    const line = frame.split("\n").find((l) => l.startsWith("data:"));
+    if (line) onEvent(JSON.parse(line.slice("data:".length).trim()));
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let sep = buffer.indexOf("\n\n");
+    while (sep !== -1) {
+      flush(buffer.slice(0, sep));
+      buffer = buffer.slice(sep + 2);
+      sep = buffer.indexOf("\n\n");
+    }
+  }
+  if (buffer.trim()) flush(buffer); // trailing frame with no terminating blank line
 }
 
-/** Shared body of the scan endpoints: POST + 409 → AmbiguousVersionError. */
-async function scanAt<T>(endpoint: string, path: string, version?: string): Promise<T> {
-  const res = await fetch(`${BASE}${endpoint}`, {
+/** Scan an instance (launcher root or bare `mods/` folder) into a full report —
+ *  the mod conflict map plus content-pack sections — reporting live progress
+ *  through `onProgress` as the backend works the set. Ambiguous version sets
+ *  reject with {@link AmbiguousVersionError} (the 409 lands before the stream
+ *  opens); mods and content folders are located automatically. */
+export async function scanInstanceStream(
+  path: string,
+  version: string | undefined,
+  onProgress: ScanProgress,
+): Promise<InstanceReport> {
+  const res = await fetch(`${BASE}/instance/scan/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path, version }),
@@ -480,5 +564,14 @@ async function scanAt<T>(endpoint: string, path: string, version?: string): Prom
     throw new AmbiguousVersionError(body.detail);
   }
   if (!res.ok) throw await httpError(res);
-  return res.json() as Promise<T>;
+
+  let report: InstanceReport | null = null;
+  await consumeEventStream(res, (event) => {
+    const e = event as ScanStreamEvent;
+    if (e.phase === "progress") onProgress(e.percent, e.label);
+    else if (e.phase === "done") report = e.report;
+    else throw new Error(e.message);
+  });
+  if (!report) throw new Error("Scan stream ended without a result");
+  return report;
 }

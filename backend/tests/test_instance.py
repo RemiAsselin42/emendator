@@ -115,6 +115,48 @@ def test_instance_scan_endpoint(tmp_path: Path) -> None:
     assert body["resourcepacks"] == []
 
 
+def _stream_events(text: str) -> list[dict]:
+    """Parse an SSE stream body into its decoded ``data:`` payloads."""
+    events: list[dict] = []
+    for frame in text.split("\n\n"):
+        for line in frame.split("\n"):
+            if line.startswith("data:"):
+                events.append(json.loads(line[len("data:") :].strip()))
+    return events
+
+
+def test_instance_scan_stream_endpoint(tmp_path: Path) -> None:
+    _jar(tmp_path / "mods", "a.jar", {"id": "a", "depends": {"minecraft": "1.21.1"}})
+    res = client.post("/instance/scan/stream", json={"path": str(tmp_path)})
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("text/event-stream")
+
+    events = _stream_events(res.text)
+    phases = [e["phase"] for e in events]
+    assert "progress" in phases
+    assert phases[-1] == "done"
+
+    # Progress is monotonic and stays below 100 until the terminal "done" frame.
+    percents = [e["percent"] for e in events if e["phase"] == "progress"]
+    assert percents == sorted(percents)
+    assert all(0 <= p < 100 for p in percents)
+
+    # The "done" frame carries the same InstanceReport shape as /instance/scan.
+    report = events[-1]["report"]
+    assert report["mods"]["counts"]["mods"] == 1
+    assert report["mods"]["profile"] == "1.21.1"
+    assert report["instance"]["source"] == "vanilla"
+
+
+def test_instance_scan_stream_409_on_ambiguous(tmp_path: Path) -> None:
+    # Ambiguity is resolved before the stream opens, so it still 409s up front.
+    _jar(tmp_path / "mods", "old.jar", {"id": "old", "depends": {"minecraft": "<=1.20.6"}})
+    _jar(tmp_path / "mods", "new.jar", {"id": "new", "depends": {"minecraft": ">=1.21"}})
+    res = client.post("/instance/scan/stream", json={"path": str(tmp_path)})
+    assert res.status_code == 409
+    assert res.json()["detail"]["status"] == "ambiguous"
+
+
 def test_instance_scan_detects_datapacks(tmp_path: Path) -> None:
     _jar(tmp_path / "mods", "a.jar", {"id": "a", "version": "1"})
     (tmp_path / "saves" / "world" / "datapacks" / "dp").mkdir(parents=True)

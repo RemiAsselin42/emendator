@@ -12,6 +12,7 @@ import { VirtualList } from "./components/VirtualList";
 import type {
   ApplyResult,
   ApplyTarget,
+  BisectProgress,
   BisectResult,
   Conflict,
   Datapack,
@@ -1251,13 +1252,17 @@ function VerdictCause({ cause, onResolve }: { cause: RunCause; onResolve: () => 
       <p className="note">
         {cause.category}: {cause.summary}
       </p>
-      <p>
-        The runner detected {cause.mods.length} mod
-        {cause.mods.length > 1 ? "s" : ""} that may be involved :
-      </p>
-      <ul>
-        <li className="note cause-mods">{cause.mods.length > 0 && `${cause.mods.join(", ")}`}</li>
-      </ul>
+      {cause.mods.length > 0 && (
+        <>
+          <p>
+            The runner detected {cause.mods.length} mod
+            {cause.mods.length > 1 ? "s" : ""} that may be involved :
+          </p>
+          <ul>
+            <li className="note cause-mods">{cause.mods.join(", ")}</li>
+          </ul>
+        </>
+      )}
       {cause.excerpt && (
         <details className="cause-excerpt">
           <summary>Causes</summary>
@@ -1316,7 +1321,6 @@ function TestView({
       {!runnerSupported && <RunnerUnsupported block={block} />}
       <section className="runner">
         <TestButton onTest={onTest} testing={testing} disabled={!runnerSupported} />
-        {testing && <span className="note"> a real boot takes minutes; needs Docker running</span>}
       </section>
 
       {verdict ? (
@@ -1359,42 +1363,85 @@ function BisectPanel({ bisectResult }: { bisectResult: BisectResult }) {
   );
 }
 
+// mm:ss once past a minute (bisection runs minutes), bare seconds before that.
+function formatElapsed(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return mins > 0 ? `${mins}m ${secs.toString().padStart(2, "0")}s` : `${secs}s`;
+}
+
+// Live status under the Bisect button: a spinner (proof it's alive), the current
+// phase + how many candidates are still in play, the boot count, and a ticking
+// elapsed timer — so a multi-minute boot doesn't look frozen. Mounted only while
+// bisecting, so the timer starts at the run's start.
+function BisectStatus({ progress }: { progress: BisectProgress | null }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const start = Date.now();
+    const id = window.setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const plural = (n: number) => (n === 1 ? "" : "s");
+  let detail: string;
+  if (!progress) detail = "Starting…";
+  else if (progress.step === "full") detail = "Booting the full set to reproduce the crash…";
+  else if (progress.step === "confirm")
+    detail = `Confirming the minimal set (${progress.remaining} mod${plural(progress.remaining)})…`;
+  else detail = `Narrowing — ${progress.remaining} mod${plural(progress.remaining)} still in play`;
+
+  return (
+    <div className="bisect-status" role="status" aria-live="polite">
+      <div>
+        {" "}
+        <SpinnerIcon />
+        <span className="note"> {detail}</span>
+      </div>
+      <span className="note">
+        {progress && progress.boots > 0 && `Boot #${progress.boots}`}
+        {` · ${formatElapsed(elapsed)} elapsed`}
+      </span>
+    </div>
+  );
+}
+
 // "Bisect" sub-tab: delta-debug a crashing set down to the minimal guilty subset.
 function BisectView({
   onBisect,
   bisecting,
   bisectResult,
+  bisectProgress,
   runnerSupported,
   block,
 }: {
   onBisect: () => void;
   bisecting: boolean;
   bisectResult: BisectResult | null;
+  bisectProgress: BisectProgress | null;
   runnerSupported: boolean;
   block: string | null;
 }) {
   return (
     <div className={`view${bisectResult ? "" : " view-centered"}`}>
       {!runnerSupported && <RunnerUnsupported block={block} />}
-      <section className="runner">
+      <section className="runner bisect">
         <button
           className="btn-primary"
           type="button"
           onClick={onBisect}
           disabled={bisecting || !runnerSupported}
         >
-          {bisecting ? "bisecting…" : "Find guilty set (bisection)"}
+          {bisecting ? "Bisecting…" : "Find guilty set (bisection)"}
         </button>
-        {bisecting && (
-          <span className="note"> each step is a real boot (~log2 N); takes minutes</span>
-        )}
+        {bisecting && <BisectStatus progress={bisectProgress} />}
       </section>
 
-      {bisectResult ? (
-        <BisectPanel bisectResult={bisectResult} />
-      ) : (
-        <p className="note">No bisection yet. Run one to isolate the guilty subset.</p>
-      )}
+      {!bisecting &&
+        (bisectResult ? (
+          <BisectPanel bisectResult={bisectResult} />
+        ) : (
+          <p className="note">No bisection yet. Run one to isolate the guilty subset.</p>
+        ))}
     </div>
   );
 }
@@ -1410,6 +1457,7 @@ export function RuntimeView({
   onBisect,
   bisecting,
   bisectResult,
+  bisectProgress,
   runnerSupported,
   block,
   onResolve,
@@ -1418,6 +1466,7 @@ export function RuntimeView({
   onBisect: () => void;
   bisecting: boolean;
   bisectResult: BisectResult | null;
+  bisectProgress: BisectProgress | null;
   runnerSupported: boolean;
   block: string | null;
   onResolve: () => void;
@@ -1460,6 +1509,7 @@ export function RuntimeView({
           onBisect={onBisect}
           bisecting={bisecting}
           bisectResult={bisectResult}
+          bisectProgress={bisectProgress}
           runnerSupported={runnerSupported}
           block={block}
         />

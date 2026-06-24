@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { AppHeader, ContentTabPanel, CoreTabPanel, ScanTab, Sidebar } from "./AppChrome";
+import {
+  AppHeader,
+  ContentTabPanel,
+  CoreTabPanel,
+  ScanProgressOverlay,
+  ScanTab,
+  Sidebar,
+} from "./AppChrome";
 import { CurseForgeConnect } from "./CurseForgeConnect";
 import { type CurseForgeStatus, getCurseForgeStatus } from "./lib/api";
 import { useExternalLinks } from "./lib/external";
@@ -29,6 +36,7 @@ export default function App() {
   const session = useScanSession();
   const {
     backendDown,
+    dockerDown,
     path,
     setPath,
     result,
@@ -36,11 +44,14 @@ export default function App() {
     instance,
     scanning,
     scanError,
+    progress,
+    progressLabel,
     dragging,
     verdict,
     testing,
     bisectResult,
     bisecting,
+    bisectProgress,
     tab,
     setTab,
     version,
@@ -84,6 +95,7 @@ export default function App() {
             setTab={setTab}
             conflictCount={conflictCount}
             contentTabs={contentTabs}
+            testing={testing}
           />
         )}
 
@@ -113,6 +125,7 @@ export default function App() {
                 testing={testing}
                 bisecting={bisecting}
                 bisectResult={bisectResult}
+                bisectProgress={bisectProgress}
                 updatedJars={updatedJars}
                 onUpdated={markUpdated}
                 onTest={onTest}
@@ -128,14 +141,28 @@ export default function App() {
         </div>
       </div>
 
-      {backendDown && (
-        <div className="toast toast-error" role="alert">
-          <span className="toast-title">Backend unreachable</span>
-          <span className="toast-body">Retrying…</span>
-        </div>
-      )}
+      {/* Backend and Docker are independent health signals, so their toasts stack
+          bottom-right and coexist (one above the other when both are down) rather
+          than one replacing or hiding the other. */}
+      <div className="toast-stack">
+        {backendDown && (
+          <div className="toast toast-error" role="alert">
+            <span className="toast-title">Backend unreachable</span>
+            <span className="toast-body">Please restart the app</span>
+          </div>
+        )}
+
+        {dockerDown && (
+          <div className="toast toast-warn" role="status">
+            <span className="toast-title">Docker unreachable</span>
+            <span className="toast-body">Runtime tests need Docker running</span>
+          </div>
+        )}
+      </div>
 
       <CurseForgeConnect status={cfStatus} onChanged={setCfStatus} />
+
+      {scanning && <ScanProgressOverlay percent={progress} label={progressLabel} />}
     </main>
   );
 }

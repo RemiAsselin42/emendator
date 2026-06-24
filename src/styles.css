@@ -142,13 +142,43 @@ a:hover {
   animation: toast-in 0.3s ease;
 }
 
+/* Health toasts (backend / Docker) share this bottom-right column so they stack
+   and coexist instead of overlapping. Container is click-through; each toast
+   re-enables pointer events. Toasts inside drop their own fixed positioning. */
+.toast-stack {
+  position: fixed;
+  right: var(--space-lg);
+  bottom: var(--space-lg);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-sm);
+  pointer-events: none;
+}
+
+.toast-stack .toast {
+  position: static;
+  pointer-events: auto;
+}
+
 .toast-error {
   border-color: var(--color-error);
+}
+
+/* Amber warning twin of toast-error (e.g. Docker unreachable) — soft outcome, not
+   a hard failure, so it borrows --color-warn for the border and title. */
+.toast-warn {
+  border-color: var(--color-warn);
 }
 
 .toast-title {
   font-weight: 600;
   color: var(--color-error);
+}
+
+.toast-warn .toast-title {
+  color: var(--color-warn);
 }
 
 .toast-body {
@@ -643,7 +673,7 @@ a:hover {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  max-height: calc(100vh - 20em - var(--space-md));
+  max-height: calc(100vh - 25em - var(--space-md));
 }
 
 .vlist-track {
@@ -837,6 +867,48 @@ a:hover {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* Full-window scan-progress overlay: a centered spinner with the live percentage
+   and phase label. Dimming backdrop matches the connect modal; single bordered
+   surface (DESIGN.md: borders over shadows), gold spinner and percentage. */
+.scan-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+  background: rgba(0, 0, 0, 0.6);
+  animation: toast-in 0.2s ease;
+}
+
+.scan-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  min-width: 220px;
+  background: var(--color-background);
+  border: var(--border);
+  border-radius: var(--radius);
+}
+
+.scan-spinner {
+  color: var(--color-primary);
+}
+
+.scan-percent {
+  font-size: 1.8rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-primary);
+}
+
+.scan-overlay-label {
+  font-size: 0.95rem;
+  opacity: 0.8;
 }
 
 /* Key/value metadata grid. */
@@ -1052,6 +1124,9 @@ a:hover {
   padding: var(--space-md);
   cursor: pointer;
   transition: var(--transition);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .nav-item:hover:not(:disabled) {
@@ -1069,6 +1144,13 @@ a:hover {
 .nav-item:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Background auto-boot marker on the Runtime nav item: a small gold spinner. */
+.nav-spinner {
+  margin-left: var(--space-sm);
+  vertical-align: middle;
+  color: var(--color-primary);
 }
 
 /* Content column: dropzone panel + active panel, stacked. min-width:0 lets wide
@@ -1337,7 +1419,25 @@ a:hover {
 .runner {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-sm);
+}
+
+.bisect {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+/* Live bisection status next to the Bisect button: gold spinner (proof it's
+   alive) + a single muted status line. Wraps below the button on narrow panels
+   via the runner row's flex-wrap. */
+.bisect-status {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--color-primary);
 }
 
 /* Runtime verdict status colors. */

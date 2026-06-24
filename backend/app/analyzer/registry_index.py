@@ -17,6 +17,7 @@ documented as an approximation in the UI.
 
 import json
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -25,10 +26,17 @@ from app.models import ItemEntry, RegistryIndex
 _LANG_SUFFIX = "/lang/en_us.json"
 
 
-def build_registry_index(jars: list[Path]) -> RegistryIndex:
-    """Scan every jar's lang/model assets into a deduplicated item/block index."""
+def build_registry_index(
+    jars: list[Path], on_progress: Callable[[int, int], None] | None = None
+) -> RegistryIndex:
+    """Scan every jar's lang/model assets into a deduplicated item/block index.
+
+    ``on_progress(done, total)`` fires after each jar so the index pass can feed
+    a live progress stream alongside the main scan.
+    """
     entries: dict[str, ItemEntry] = {}
-    for jar in jars:
+    total = len(jars)
+    for done, jar in enumerate(jars, start=1):
         try:
             with zipfile.ZipFile(jar) as zf:
                 names = zf.namelist()
@@ -36,6 +44,9 @@ def build_registry_index(jars: list[Path]) -> RegistryIndex:
                 _collect_item_models(names, entries)
         except (zipfile.BadZipFile, OSError):
             continue
+        finally:
+            if on_progress is not None:
+                on_progress(done, total)
     items = sorted(entries.values(), key=lambda e: (e.kind, e.id))
     return RegistryIndex(
         items=items,
