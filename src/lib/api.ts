@@ -147,10 +147,6 @@ export interface BisectResult {
   note: string | null;
 }
 
-export function bisectSet(path: string, version?: string): Promise<BisectResult> {
-  return postJson<BisectResult>("/runner/bisect", { path, version });
-}
-
 /** Live bisection status (mirrors the backend `BisectProgress`), one per boot:
  *  the phase, boots started so far, jars booting now, and candidates still in play. */
 export interface BisectProgress {
@@ -165,8 +161,8 @@ type BisectStreamEvent =
   | { phase: "done"; result: BisectResult }
   | { phase: "error"; message: string };
 
-/** Streaming twin of {@link bisectSet}: resolves to the same `BisectResult` but
- *  reports live per-boot progress through `onProgress`, so the UI can show the
+/** Boot a crashing set and delta-debug it down to the minimal guilty subset,
+ *  reporting live per-boot progress through `onProgress` so the UI can show the
  *  (variable-length) search is running and how far it has narrowed. */
 export async function bisectSetStream(
   path: string,
@@ -511,14 +507,6 @@ export async function discoverInstances(): Promise<Instance[]> {
   return res.json() as Promise<Instance[]>;
 }
 
-/** Scan an instance (launcher root or bare `mods/` folder) into a full report:
- *  the mod conflict map plus content-pack sections. Ambiguous version sets
- *  reject with 409 as {@link AmbiguousVersionError}; mods and content folders
- *  are located automatically. */
-export function scanInstance(path: string, version?: string): Promise<InstanceReport> {
-  return scanAt<InstanceReport>("/instance/scan", path, version);
-}
-
 /** Progress callback for {@link scanInstanceStream}: a 0–100 percent and a short
  *  human label for the phase currently running. */
 export type ScanProgress = (percent: number, label: string) => void;
@@ -556,11 +544,11 @@ async function consumeEventStream(res: Response, onEvent: (event: unknown) => vo
   if (buffer.trim()) flush(buffer); // trailing frame with no terminating blank line
 }
 
-/** Streaming twin of {@link scanInstance}: resolves to the same `InstanceReport`
- *  but reports live progress through `onProgress` as the backend works the set.
- *  Ambiguous version sets still reject with {@link AmbiguousVersionError} (the
- *  409 lands before the stream opens), so callers handle errors exactly as with
- *  {@link scanInstance}. */
+/** Scan an instance (launcher root or bare `mods/` folder) into a full report —
+ *  the mod conflict map plus content-pack sections — reporting live progress
+ *  through `onProgress` as the backend works the set. Ambiguous version sets
+ *  reject with {@link AmbiguousVersionError} (the 409 lands before the stream
+ *  opens); mods and content folders are located automatically. */
 export async function scanInstanceStream(
   path: string,
   version: string | undefined,
@@ -586,19 +574,4 @@ export async function scanInstanceStream(
   });
   if (!report) throw new Error("Scan stream ended without a result");
   return report;
-}
-
-/** Shared body of the scan endpoints: POST + 409 → AmbiguousVersionError. */
-async function scanAt<T>(endpoint: string, path: string, version?: string): Promise<T> {
-  const res = await fetch(`${BASE}${endpoint}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, version }),
-  });
-  if (res.status === 409) {
-    const body = (await res.json()) as { detail: VersionDetection };
-    throw new AmbiguousVersionError(body.detail);
-  }
-  if (!res.ok) throw await httpError(res);
-  return res.json() as Promise<T>;
 }
