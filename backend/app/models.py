@@ -406,6 +406,14 @@ class InstallRequest(CamelModel):
     loader: Loader | None = None  # loader to match (else detected)
 
 
+class ProviderLink(CamelModel):
+    """A direct link to a dependency's project page on a provider (for not_found)."""
+
+    provider: Literal["modrinth", "curseforge"]
+    title: str
+    url: str | None = None
+
+
 class InstallResult(CamelModel):
     """Outcome of installing a missing dependency into a mods folder."""
 
@@ -414,6 +422,33 @@ class InstallResult(CamelModel):
     jar: str | None = None  # the filename that was written
     version: str | None = None  # the version number installed
     message: str | None = None
+    # On not_found: direct project links for the providers where the dependency
+    # exists but has no build for the pack's loader + MC version. Empty when it
+    # was found nowhere — the front then offers a manual search instead.
+    links: list[ProviderLink] = []
+
+
+# --- CurseForge connection (UI-entered API key for the install fallback) -----
+
+
+class CurseForgeKeyRequest(CamelModel):
+    """Body of ``POST /config/curseforge``: the user-entered API key (blank clears)."""
+
+    api_key: str
+
+
+class CurseForgeStatus(CamelModel):
+    """Whether a CurseForge key is configured (and, right after a set, if it verified).
+
+    ``valid`` is ``None`` when not probed (the GET status) or when there's no key;
+    otherwise it reflects whether the key authenticated against the CurseForge API.
+    ``detail`` carries the human-readable reason when a probe failed (rejected key
+    vs. unreachable API), so the front can show exactly what went wrong.
+    """
+
+    configured: bool
+    valid: bool | None = None
+    detail: str | None = None
 
 
 # --- Disable / enable a mod (reversible sideline, never a delete) ------------
@@ -462,7 +497,6 @@ class InstanceFolders(CamelModel):
 
     mods: str | None = None
     resourcepacks: str | None = None
-    shaderpacks: str | None = None
     config: str | None = None
     datapacks: list[str] = []
 
@@ -484,10 +518,9 @@ class Instance(CamelModel):
     mod_count: int = 0
     resourcepack_count: int = 0
     datapack_count: int = 0
-    shaderpack_count: int = 0
 
 
-# --- Content packs beyond mods (resource packs / datapacks / shaders) -----
+# --- Content packs beyond mods (resource packs / datapacks) ---------------
 
 
 class ResourcePack(CamelModel):
@@ -508,13 +541,6 @@ class Datapack(CamelModel):
     pack_format: int | None = None
     description: str | None = None
     data_count: int = 0
-    source: Literal["zip", "dir"] = "dir"
-
-
-class ShaderPack(CamelModel):
-    """A shader pack (Iris/OptiFine): opaque, inventoried only."""
-
-    name: str
     source: Literal["zip", "dir"] = "dir"
 
 
@@ -555,7 +581,6 @@ class InstanceReport(CamelModel):
     mods: ScanResult
     resourcepacks: list[ResourcePack] = []
     datapacks: list[Datapack] = []
-    shaderpacks: list[ShaderPack] = []
     resourcepack_conflicts: list[Conflict] = []
     datapack_conflicts: list[Conflict] = []
     items: RegistryIndex = RegistryIndex()

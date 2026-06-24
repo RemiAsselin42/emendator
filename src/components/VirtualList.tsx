@@ -1,6 +1,6 @@
 import {
   type ReactNode,
-  type RefObject,
+  type Ref,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -8,6 +8,12 @@ import {
   useRef,
   useState,
 } from "react";
+
+// Assign a DOM node to either a callback ref or an object ref.
+function setRef<T>(ref: Ref<T> | undefined, value: T | null): void {
+  if (typeof ref === "function") ref(value);
+  else if (ref) ref.current = value;
+}
 
 // Rows rendered just outside the viewport, each side, so a fast scroll doesn't
 // flash blank space before the next measure pass catches up.
@@ -79,12 +85,21 @@ export function VirtualList<T>({
   estimate: number;
   gap?: number;
   renderItem: (item: T) => ReactNode;
-  scrollRef?: RefObject<HTMLDivElement | null>;
+  scrollRef?: Ref<HTMLDivElement | null>;
   className?: string;
 }) {
   // Internal ref drives the virtualization (scroll/measure); scrollRef mirrors the
-  // same element so a parent can scroll the list to top.
+  // same element so a parent can scroll the list to top — or attach a callback ref
+  // (e.g. useViewportFill) to the scroll container. Stable across renders so the
+  // forwarded callback ref isn't torn down and rebuilt on every scroll re-render.
   const listRef = useRef<HTMLDivElement>(null);
+  const setRoot = useCallback(
+    (el: HTMLDivElement | null) => {
+      listRef.current = el;
+      setRef(scrollRef, el);
+    },
+    [scrollRef],
+  );
   const heights = useRef<Map<string, number>>(new Map());
   const nodes = useRef<Map<string, HTMLDivElement>>(new Map());
   const [scrollTop, setScrollTop] = useState(0);
@@ -165,13 +180,7 @@ export function VirtualList<T>({
   const windowItems = items.slice(start, end);
 
   return (
-    <div
-      ref={(el) => {
-        listRef.current = el;
-        if (scrollRef) scrollRef.current = el;
-      }}
-      className={className}
-    >
+    <div ref={setRoot} className={className}>
       <div className="vlist-track" style={{ height: totalH }}>
         {windowItems.map((item, i) => {
           const index = start + i;

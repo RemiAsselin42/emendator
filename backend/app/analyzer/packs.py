@@ -1,11 +1,11 @@
 """Inventory and override detection for content beyond mods.
 
-Resource packs (``resourcepacks/``), datapacks (a global ``datapacks/`` plus each
-world's ``saves/<world>/datapacks``) and shader packs (``shaderpacks/``) each ship
-as a ``.zip`` or a folder. We read ``pack.mcmeta`` for a quick inventory, and for
-resource packs / datapacks we flag **overrides**: the same inner path provided by
-two or more packs (a texture, a recipe, a loot table). Overrides are expected —
-load order decides the winner — so they are ``info``: a heads-up, not an error.
+Resource packs (``resourcepacks/``) and datapacks (a global ``datapacks/`` plus
+each world's ``saves/<world>/datapacks``) each ship as a ``.zip`` or a folder. We
+read ``pack.mcmeta`` for a quick inventory and flag **overrides**: the same inner
+path provided by two or more packs (a texture, a recipe, a loot table). Overrides
+are expected — load order decides the winner — so they are ``info``: a heads-up,
+not an error.
 """
 
 import json
@@ -14,7 +14,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from app.models import Conflict, ConflictType, Datapack, ResourcePack, ShaderPack
+from app.models import Conflict, ConflictType, Datapack, ResourcePack
 
 _MCMETA = "pack.mcmeta"
 # Cap the path list embedded in an override conflict; the count carries the rest.
@@ -69,14 +69,6 @@ def scan_datapacks(dirs: list[str]) -> tuple[list[Datapack], list[Conflict]]:
             # don't get merged (and don't false-collide across worlds).
             by_source[f"{location}/{entry.name}"] = data_files
     return packs, _overrides(by_source, "datapack_override")
-
-
-def scan_shaderpacks(folder: Path | None) -> list[ShaderPack]:
-    """Inventory ``shaderpacks/`` (opaque — listed only, no override analysis)."""
-    return [
-        ShaderPack(name=entry.name, source="zip" if entry.suffix.lower() == ".zip" else "dir")
-        for entry in _pack_candidates(folder)
-    ]
 
 
 # --- override detection -------------------------------------------------------

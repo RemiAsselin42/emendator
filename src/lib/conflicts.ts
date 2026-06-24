@@ -28,9 +28,9 @@ export const CONSEQUENCE_LABEL: Record<Consequence, string> = {
 };
 
 export const CONSEQUENCE_HINT: Record<Consequence, string> = {
-  blocking: "the loader refuses to start",
-  silent_override: "one definition overwrites another, without warning",
-  benign: "expected coexistence, usually harmless",
+  blocking: "The loader refuses to start",
+  silent_override: "One definition overwrites another, without warning",
+  benign: "Expected coexistence (usually harmless)",
 };
 
 export function conflictConsequence(c: Conflict): Consequence {
@@ -65,7 +65,10 @@ export function conflictByMod(c: Conflict): Record<string, string[]> {
 }
 
 // dependency only: the needy mod and the id it can't find.
-export function dependencyRelation(c: Conflict): { mod: string; missing: string } {
+export function dependencyRelation(c: Conflict): {
+  mod: string;
+  missing: string;
+} {
   return {
     mod: String(c.detail.mod ?? c.members[0] ?? ""),
     missing: String(c.detail.missing ?? ""),
@@ -209,7 +212,12 @@ export function groupMixinClusters(
     const key = c.members.join(" ↔ ");
     let acc = byMembers.get(key);
     if (!acc) {
-      acc = { members: c.members, targets: new Set(), methods: new Set(), confirmed: false };
+      acc = {
+        members: c.members,
+        targets: new Set(),
+        methods: new Set(),
+        confirmed: false,
+      };
       byMembers.set(key, acc);
     }
     const target = c.detail.target;

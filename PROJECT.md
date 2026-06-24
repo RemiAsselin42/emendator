@@ -82,7 +82,7 @@ through the **version profile** (§6) — never hardcoded.
   loader-agnostic (`app/analyzer/metadata/`).
 - **Launcher-native ingestion**: point at a CurseForge / Modrinth / Prism / MultiMC instance (or a
   bare `mods/` folder) and the content sub-folders are located automatically (`app/sources/`).
-- **Beyond mods**: inventory of resource packs / datapacks / shaders, override detection
+- **Beyond mods**: inventory of resource packs / datapacks, override detection
   (assets/data shipped by ≥2 packs), and a global index of the items/blocks the pack adds
   (`app/analyzer/packs.py`, `registry_index.py`).
 - **Online enrichment** (best-effort, offline-first): Modrinth (hash lookup + update check) and

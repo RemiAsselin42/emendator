@@ -1,14 +1,14 @@
 ---
 version: alpha
 name: Emendator
-description: Emendator visual identity — gold / mauve contrast, dense and utilitarian but warm. Aimed at code agents.
+description: Emendator visual identity and design system. 
 colors:
   primary: "#61c970"      # light green — sole driver of interaction
   secondary: "#2d8848"    # dark green — secondary accent / hover state
   background: "#171917"   # green grey — global background (primary-background)
   surface: "#404741"      # light green grey — rare secondary surface + border color
   text: "#dde1de"         # grey white — text on dark backgrounds
-  on-accent: "#37323e"    # dark text placed on green accents (AA contrast)
+  on-accent: "#171917"    # dark text placed on green accents (Aa contrast)
 typography:
   h1:
     fontFamily: "Poltawski Nowy"
@@ -98,7 +98,7 @@ components:
     textColor: "{colors.secondary}"
 ---
 
-## Overview
+## Mods
 
 Emendator — "one who removes flaws." The interface is a **dense, utilitarian tool**: it
 displays mod lists, conflicts, and boot verdicts. It must stay readable and calm, never
@@ -124,8 +124,8 @@ Five roles, plus one text color for accents.
 - **background `#171917` (green grey)** — global background, present everywhere.
 - **surface `#404741` (light green grey)** — dual role: default **border color**, and **rare**
   secondary surface (selected row, active area). Do not use as a generalized second background.
-- **text `#F8F5FC` (mauve white)** — body text on dark backgrounds.
-- **on-accent `#37323E`** — text placed **on** green. Essential: light text on green
+- **text `#F8F5FC` (grey white)** — body text on dark backgrounds.
+- **on-accent `#171917`** — text placed **on** green. Essential: light text on green
   fails contrast; dark text passes.
 
 Contrast (WCAG AA, threshold 4.5:1), verified:
@@ -137,7 +137,7 @@ Contrast (WCAG AA, threshold 4.5:1), verified:
 | on-accent on primary | ~6.6:1 | AA |
 | on-accent on secondary | ~5.4:1 | AA |
 
-> Consequence: every gold/orange button carries **dark** text (`on-accent`), never white.
+> Consequence: every green button carries **dark** text (`on-accent`), never white.
 > White text is reserved for dark backgrounds (background, surface).
 
 ## Typography
@@ -227,9 +227,9 @@ only a hue shift, over `0.3s ease`.
 ## Do's and Don'ts
 
 **Do**
-- Reserve gold (`primary`) for interaction signals; leave everything else in mauve-grey.
+- Reserve green (`primary`) for interaction signals; leave everything else in green-grey.
 - Separate elements with **borders**, keep a single background.
-- **Dark** text (`on-accent`) on gold/orange accents.
+- **Dark** text (`on-accent`) on green accents.
 - **SVG** icons from libraries; button labels short or absent.
 - Prefer **compact text** (weight/opacity), or **no text at all**, over a long label.
 - Never render text **below 16px (`1rem`)** — RGAA floor, no exceptions.

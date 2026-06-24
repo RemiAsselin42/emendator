@@ -165,12 +165,21 @@ export function updateMod(
 
 export type InstallStatus = "installed" | "not_found" | "error";
 
+export interface ProviderLink {
+  provider: "modrinth" | "curseforge";
+  title: string;
+  url: string | null;
+}
+
 export interface InstallResult {
   status: InstallStatus;
   modId: string;
   jar: string | null;
   version: string | null;
   message: string | null;
+  // On not_found: direct project links for providers where the dep exists but has
+  // no build for this loader + version. Empty → the dep was found nowhere.
+  links: ProviderLink[];
 }
 
 /** Install a dependency the runner flagged as missing, by its mod id (downloads
@@ -182,6 +191,26 @@ export function installMod(
   loader?: Loader,
 ): Promise<InstallResult> {
   return postJson<InstallResult>("/mods/install", { path, modId, version, loader });
+}
+
+// --- CurseForge connection (the install fallback's API key) ----------------
+
+export interface CurseForgeStatus {
+  configured: boolean;
+  valid: boolean | null; // probe result right after a set; null when not probed
+  detail: string | null; // why a probe failed (rejected key vs. unreachable API)
+}
+
+/** Whether a CurseForge API key is configured (drives the connect prompt). */
+export async function getCurseForgeStatus(): Promise<CurseForgeStatus> {
+  const res = await fetch(`${BASE}/config/curseforge`);
+  if (!res.ok) throw await httpError(res);
+  return res.json() as Promise<CurseForgeStatus>;
+}
+
+/** Save (or, with a blank string, clear) the CurseForge API key; probes validity. */
+export function setCurseForgeKey(apiKey: string): Promise<CurseForgeStatus> {
+  return postJson<CurseForgeStatus>("/config/curseforge", { apiKey });
 }
 
 export type DisableStatus = "disabled" | "enabled" | "not_found" | "error";
@@ -362,7 +391,6 @@ export type InstanceSource =
 export interface InstanceFolders {
   mods: string | null;
   resourcepacks: string | null;
-  shaderpacks: string | null;
   config: string | null;
   datapacks: string[];
 }
@@ -377,7 +405,6 @@ export interface Instance {
   modCount: number;
   resourcepackCount: number;
   datapackCount: number;
-  shaderpackCount: number;
 }
 
 export interface ResourcePack {
@@ -394,11 +421,6 @@ export interface Datapack {
   packFormat: number | null;
   description: string | null;
   dataCount: number;
-  source: "zip" | "dir";
-}
-
-export interface ShaderPack {
-  name: string;
   source: "zip" | "dir";
 }
 
@@ -421,7 +443,6 @@ export interface InstanceReport {
   mods: ScanResult;
   resourcepacks: ResourcePack[];
   datapacks: Datapack[];
-  shaderpacks: ShaderPack[];
   resourcepackConflicts: Conflict[];
   datapackConflicts: Conflict[];
   items: RegistryIndex;

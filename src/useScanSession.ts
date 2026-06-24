@@ -21,18 +21,17 @@ import { isRecipeCollision } from "./lib/conflicts";
 
 export type Tab =
   | "scan"
-  | "overview"
+  | "mods"
   | "conflicts"
   | "runtime"
   | "resolution"
   | "resourcepacks"
   | "datapacks"
-  | "shaders"
   | "items";
 
 export const TABS: { id: Tab; label: string }[] = [
   { id: "scan", label: "Scan" },
-  { id: "overview", label: "Overview" },
+  { id: "mods", label: "Mods" },
   { id: "conflicts", label: "Conflicts" },
   { id: "runtime", label: "Runtime" },
   { id: "resolution", label: "Resolution" },
@@ -61,7 +60,10 @@ function buildVersionOptions(
   version: string | null,
   detectionBlock: string | null,
 ): VersionOption[] {
-  const options = profiles.map((p) => ({ value: p.version, label: `${p.version} · ${p.block}` }));
+  const options = profiles.map((p) => ({
+    value: p.version,
+    label: `${p.version} · ${p.block}`,
+  }));
   if (version && !options.some((o) => o.value === version)) {
     options.unshift({
       value: version,
@@ -77,11 +79,17 @@ function buildContentTabs(report: InstanceReport | null): ContentTab[] {
   const tabs: ContentTab[] = [];
   if (!report) return tabs;
   if (report.resourcepacks.length > 0)
-    tabs.push({ id: "resourcepacks", label: "Resource Packs", count: report.resourcepacks.length });
+    tabs.push({
+      id: "resourcepacks",
+      label: "Resource Packs",
+      count: report.resourcepacks.length,
+    });
   if (report.datapacks.length > 0)
-    tabs.push({ id: "datapacks", label: "Datapacks", count: report.datapacks.length });
-  if (report.shaderpacks.length > 0)
-    tabs.push({ id: "shaders", label: "Shaders", count: report.shaderpacks.length });
+    tabs.push({
+      id: "datapacks",
+      label: "Datapacks",
+      count: report.datapacks.length,
+    });
   if (report.items.total > 0) tabs.push({ id: "items", label: "Items", count: report.items.total });
   return tabs;
 }
@@ -126,7 +134,12 @@ const initialScan: ScanState = {
 function scanReducer(state: ScanState, action: ScanAction): ScanState {
   switch (action.type) {
     case "start":
-      return { ...state, scanning: true, scanError: null, pendingDetection: null };
+      return {
+        ...state,
+        scanning: true,
+        scanError: null,
+        pendingDetection: null,
+      };
     case "instance":
       return { ...state, instance: action.instance };
     case "success":
@@ -138,9 +151,19 @@ function scanReducer(state: ScanState, action: ScanAction): ScanState {
         version: action.report.mods.profile,
       };
     case "ambiguous":
-      return { ...state, result: null, report: null, pendingDetection: action.detection };
+      return {
+        ...state,
+        result: null,
+        report: null,
+        pendingDetection: action.detection,
+      };
     case "failed":
-      return { ...state, result: null, report: null, scanError: action.message };
+      return {
+        ...state,
+        result: null,
+        report: null,
+        scanError: action.message,
+      };
     case "settled":
       return { ...state, scanning: false };
   }
@@ -170,7 +193,10 @@ function useBackendHealth(): boolean {
 
 // Best-effort startup fetches: the version blocks offered in the manual override
 // and the modpacks auto-discovered from installed launchers (quick-select).
-function useStartupData(): { profiles: VersionCandidate[]; discovered: Instance[] } {
+function useStartupData(): {
+  profiles: VersionCandidate[];
+  discovered: Instance[];
+} {
   const [profiles, setProfiles] = useState<VersionCandidate[]>([]);
   const [discovered, setDiscovered] = useState<Instance[]>([]);
 
@@ -270,7 +296,15 @@ function useRunner(version: string | null, modsPath: string | null): Runner {
     setBisectResult(null);
   }, []);
 
-  return { verdict, testing, bisectResult, bisecting, onTest, onBisect, resetRunner };
+  return {
+    verdict,
+    testing,
+    bisectResult,
+    bisecting,
+    onTest,
+    onBisect,
+    resetRunner,
+  };
 }
 
 // The whole scan session: backend health, the resolved instance and its report,
@@ -322,13 +356,16 @@ export function useScanSession() {
         const scanReport = await scanInstance(trimmed, pick);
         dispatch({ type: "success", report: scanReport });
         setUpdatedJars(new Set());
-        setTab("overview");
+        setTab("mods");
       } catch (e) {
         setTab("scan");
         if (e instanceof AmbiguousVersionError) {
           dispatch({ type: "ambiguous", detection: e.detection });
         } else {
-          dispatch({ type: "failed", message: e instanceof Error ? e.message : String(e) });
+          dispatch({
+            type: "failed",
+            message: e instanceof Error ? e.message : String(e),
+          });
         }
       } finally {
         dispatch({ type: "settled" });

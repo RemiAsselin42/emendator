@@ -12,11 +12,10 @@ import {
   ConflictsView,
   DatapacksView,
   ItemsView,
-  Overview,
+  Mods,
   ResolutionView,
   ResourcePacksView,
   RuntimeView,
-  ShadersView,
 } from "./views";
 
 // How each detected source reads in the badge; raw_mods is the bare folder input.
@@ -35,7 +34,6 @@ function InstanceBadge({ instance }: { instance: Instance }) {
   const counts: string[] = [`${instance.modCount} mods`];
   if (instance.resourcepackCount > 0) counts.push(`${instance.resourcepackCount} resourcepacks`);
   if (instance.datapackCount > 0) counts.push(`${instance.datapackCount} datapacks`);
-  if (instance.shaderpackCount > 0) counts.push(`${instance.shaderpackCount} shaders`);
   return (
     <div className={`instance-badge source-${instance.source}`}>
       <span className="instance-source">{SOURCE_LABEL[instance.source]}</span>
@@ -91,7 +89,7 @@ export function AppHeader({
           </label>
           {result.detection && (
             <span className="note">
-              {result.detection.status === "confident" ? "auto-detected" : "selected"}
+              {result.detection.status === "confident" ? "Version auto-detected" : "selected"}
               {!result.detection.runnerSupported && " · runtime not yet available"}
             </span>
           )}
@@ -396,9 +394,7 @@ export function CoreTabPanel({
 }) {
   return (
     <>
-      {tab === "overview" && (
-        <Overview result={result} updatedJars={updatedJars} onUpdated={onUpdated} />
-      )}
+      {tab === "mods" && <Mods result={result} updatedJars={updatedJars} onUpdated={onUpdated} />}
       {tab === "conflicts" && <ConflictsView conflicts={result.conflicts} verdict={verdict} />}
       {tab === "runtime" && (
         <RuntimeTab
@@ -434,7 +430,7 @@ export function CoreTabPanel({
   );
 }
 
-// The content panels (resource packs / datapacks / shaders / items), present only
+// The content panels (resource packs / datapacks / items), present only
 // when the report carries that content.
 export function ContentTabPanel({ tab, report }: { tab: Tab; report: InstanceReport | null }) {
   if (!report) return null;
@@ -446,7 +442,6 @@ export function ContentTabPanel({ tab, report }: { tab: Tab; report: InstanceRep
       {tab === "datapacks" && (
         <DatapacksView packs={report.datapacks} conflicts={report.datapackConflicts} />
       )}
-      {tab === "shaders" && <ShadersView packs={report.shaderpacks} />}
       {tab === "items" && <ItemsView index={report.items} />}
     </>
   );

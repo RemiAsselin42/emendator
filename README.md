@@ -36,7 +36,7 @@ Quilt, Forge, NeoForge) — and:
 3. **isolates the guilty pairs** through automated bisection when a boot crashes;
 4. **generates no-code resolution configs** (Almost Unified `unify.json`, recipe-override datapacks).
 
-It also takes inventory **beyond mods** (resource packs, datapacks, shaders, and an approximate
+It also takes inventory **beyond mods** (resource packs, datapacks, and an approximate
 index of the items/blocks the pack adds), and **enriches** the pack online (best-effort): Modrinth
 hash lookup with update checks, plus CurseForge project links, so you can **update** an outdated jar
 or **install** a missing dependency in one click.
@@ -76,8 +76,8 @@ singular datapack folders, `c:` tags).
 
 **In scope:** all four loaders (Fabric, Quilt, Forge, NeoForge), each parsed by a per-loader
 metadata adapter into a common `Mod` · launcher-native ingestion (CurseForge, Modrinth, Prism,
-MultiMC, vanilla) or a bare `mods/` folder · inventory beyond mods (resource packs, datapacks,
-shaders) with override detection and an approximate item/block index · online enrichment (Modrinth
+MultiMC, vanilla) or a bare `mods/` folder · inventory beyond mods (resource packs, datapacks)
+with override detection and an approximate item/block index · online enrichment (Modrinth
 hash lookup + update check, CurseForge links) with one-click update/install · headless **server**
 boot · detection of content duplication (tags), recipe collisions, declared mixin overlaps,
 dependency/version issues, duplicate jars · generation of `unify.json` and recipe-override datapacks.
@@ -104,7 +104,7 @@ Landed beyond the original phases (see [`PROJECT.md`](./PROJECT.md) §2/§5/§7/
 
 - **Multi-loader** ingestion (Fabric, Quilt, Forge, NeoForge) via per-loader metadata adapters.
 - **Launcher-native instances** — auto-discover and scan CurseForge / Modrinth / Prism / MultiMC / vanilla instances.
-- **Beyond mods** — resource packs, datapacks, shaders, override detection, approximate item/block index.
+- **Beyond mods** — resource packs, datapacks, override detection, approximate item/block index.
 - **Online enrichment** — Modrinth hash lookup + update check, CurseForge links; one-click **update** / **install**.
 - **Auto version detection** with a manual override pinned in the header.
 
