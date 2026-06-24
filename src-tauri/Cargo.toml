@@ -1,6 +1,6 @@
 [package]
 name = "emendator"
-version = "0.1.1"
+version = "0.1.2"
 description = "Fabric modpack conflict analyzer (desktop shell)"
 authors = ["Remi Asselin"]
 license = "GPL-3.0-or-later"

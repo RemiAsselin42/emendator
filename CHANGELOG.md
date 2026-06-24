@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-06-24
+
+### Added
+
+- **CurseForge connect.** A corner prompt and a Settings panel (gear, top-right) add, replace or
+  remove a CurseForge API key. The key is stored locally (`~/.emendator/credentials.json`,
+  overridden by `EMENDATOR_CURSEFORGE_API_KEY`) and folded into live settings at startup, so a
+  freshly entered key arms the install fallback without a restart. Saving runs a best-effort auth
+  probe but persists the key either way — endpoints `GET /config/curseforge`,
+  `POST /config/curseforge` (`app/credentials.py`, `Settings`, `CurseForgeConnect`).
+- **Install link fallback.** When a missing dependency has no build for the active loader and
+  version, `install_mod` returns direct Modrinth / CurseForge project links instead of a bare
+  "not found", so it can be fetched manually (`InstallResult.links`).
+- **Resolution hub.** A unified, sub-tabbed resolution panel: per-conflict winner selection for
+  recipes and tags, a mixin conflict resolver (version-match + reversible disable), and one-click
+  application of the chosen resolutions into the live instance — reversibly.
+- **External links** open in the OS browser instead of being swallowed by the Tauri webview
+  (`shell:allow-open`, `lib/external.ts`).
+- **Viewport-filling lists.** Scroll containers size themselves to the live viewport — measuring
+  the surrounding chrome and the following siblings — so a long list never pushes later sections
+  off-screen (`lib/useViewportFill.ts`, `lib/useAccordion.ts`).
+
+### Changed
+
+- Default window size is now 1920×1080 (was 1000×700).
+- `DESIGN.md` palette documentation aligned to the current green identity.
+
+### Removed
+
+- **Shader pack inventory.** Shader packs are opaque to static analysis (listed only, no
+  override detection), so they carried no signal for conflict resolution. Dropped the
+  `shaderpacks/` scan, the `ShaderPack` model, the report field and the Shaders tab.
+
 ### Fixed
 
 - **Version-exact datapack `pack_format`.** Generated override datapacks now carry the
@@ -75,6 +108,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   datapacks, with preview and export from the UI.
 - **CI.** Windows installer build and draft release on tag.
 
-[Unreleased]: https://github.com/RemiAsselin42/emendator/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/RemiAsselin42/emendator/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/RemiAsselin42/emendator/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/RemiAsselin42/emendator/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/RemiAsselin42/emendator/releases/tag/v0.1.0
