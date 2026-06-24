@@ -2,12 +2,16 @@ import json
 import zipfile
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
+from app.main import app
 from app.models import RunRequest
 from app.profile import get_profile
 from app.runner import bisect
 from app.runner.bisect import _partition, _split_base_candidates, bisect_set, ddmin
 
 PROFILE = get_profile("1.21.1")
+client = TestClient(app)
 
 
 def test_partition_even_and_uneven() -> None:
@@ -35,6 +39,16 @@ def test_ddmin_isolates_pair_across_halves() -> None:
 
 def test_ddmin_single_culprit() -> None:
     assert ddmin(list(range(32)), lambda s: 7 in s) == [7]
+
+
+def test_ddmin_reports_candidate_sizes() -> None:
+    sizes: list[int] = []
+    result = ddmin(list(range(32)), lambda s: 7 in s, on_candidate=sizes.append)
+    assert result == [7]
+    # First report is the full set; each reduction shrinks it, down to the minimal.
+    assert sizes[0] == 32
+    assert sizes[-1] == 1
+    assert sizes == sorted(sizes, reverse=True)
 
 
 def test_ddmin_returns_self_when_irreducible_pair() -> None:
@@ -73,3 +87,22 @@ def test_bisect_reports_when_docker_unavailable(tmp_path: Path, monkeypatch) -> 
     assert result.status == "error"
     assert result.note and "docker" in result.note.lower()
     assert result.profile == "1.21.1"
+
+
+def test_bisect_stream_endpoint_terminates_with_done(tmp_path: Path, monkeypatch) -> None:
+    # Docker-free path: bisection bails early (error), but the SSE stream must still
+    # open as text/event-stream and end with a single terminal "done" frame.
+    monkeypatch.setattr(bisect, "is_docker_available", lambda: False)
+    _make_jar(tmp_path, "a.jar", {"id": "a", "depends": {"minecraft": "1.21.1"}})
+    res = client.post("/runner/bisect/stream", json={"path": str(tmp_path)})
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("text/event-stream")
+
+    events = [
+        json.loads(line[len("data:") :].strip())
+        for frame in res.text.split("\n\n")
+        for line in frame.split("\n")
+        if line.startswith("data:")
+    ]
+    assert events[-1]["phase"] == "done"
+    assert events[-1]["result"]["status"] == "error"

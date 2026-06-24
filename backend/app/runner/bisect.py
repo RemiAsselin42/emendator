@@ -11,12 +11,29 @@ their absence can't cause a spurious missing-dependency crash.
 
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.analyzer.mods import scan_mods_folder
 from app.models import BisectResult, BisectStatus, RunCause, RunRequest
 from app.profile import VersionProfile
 from app.runner.runner import boot_jars, detect_loader, is_docker_available
+
+
+@dataclass
+class BisectProgress:
+    """Live bisection status for the UI, emitted once per boot.
+
+    ``step`` is the phase (``full`` initial boot, ``reduce`` ddmin trial, ``confirm``
+    final minimal boot); ``boots`` is how many boots have started; ``testing`` is the
+    jar count booting now; ``remaining`` is how many candidates are still in play.
+    """
+
+    step: str
+    boots: int
+    testing: int
+    remaining: int
+
 
 # Satisfied by the runtime/loader, never shipped as a candidate jar.
 _ENV_PROVIDED = {
@@ -48,13 +65,22 @@ def _partition[T](items: list[T], n: int) -> list[list[T]]:
     return [chunk for chunk in chunks if chunk]
 
 
-def ddmin[T](elements: list[T], reproduces: Callable[[list[T]], bool]) -> list[T]:
+def ddmin[T](
+    elements: list[T],
+    reproduces: Callable[[list[T]], bool],
+    on_candidate: Callable[[int], None] | None = None,
+) -> list[T]:
     """Minimal failing subset of ``elements`` (precondition: the whole set fails).
 
     Delta debugging: try smaller chunks, then complements, increasing
     granularity until nothing can be removed while still reproducing.
+
+    ``on_candidate(size)`` fires with the working-set size at start and after each
+    reduction, so a caller can report how many candidates are still in play.
     """
     candidate = list(elements)
+    if on_candidate is not None:
+        on_candidate(len(candidate))
     granularity = 2
     while len(candidate) >= 2:
         chunks = _partition(candidate, granularity)
@@ -76,7 +102,10 @@ def ddmin[T](elements: list[T], reproduces: Callable[[list[T]], bool]) -> list[T
                     reduced = True
                     break
 
-        if not reduced:
+        if reduced:
+            if on_candidate is not None:
+                on_candidate(len(candidate))
+        else:
             if granularity >= len(candidate):
                 break
             granularity = min(granularity * 2, len(candidate))
@@ -103,8 +132,16 @@ def _split_base_candidates(
     return base, candidates, jar_to_id
 
 
-def bisect_set(request: RunRequest, profile: VersionProfile) -> BisectResult:
-    """Boot the full set; if it crashes, ddmin down to the guilty subset."""
+def bisect_set(
+    request: RunRequest,
+    profile: VersionProfile,
+    on_progress: Callable[[BisectProgress], None] | None = None,
+) -> BisectResult:
+    """Boot the full set; if it crashes, ddmin down to the guilty subset.
+
+    ``on_progress`` (optional) is called once per boot with a :class:`BisectProgress`
+    so the UI can show the search is alive and how far it has narrowed.
+    """
     start = time.monotonic()
     folder = Path(request.path)
     if not folder.is_dir():
@@ -117,11 +154,19 @@ def bisect_set(request: RunRequest, profile: VersionProfile) -> BisectResult:
     base, candidates, jar_to_id = _split_base_candidates(folder, profile.profile)
     loader = request.loader or detect_loader(folder)
     boots = 0
+    remaining = len(candidates)
 
+    def emit(step: str, testing: int) -> None:
+        if on_progress is not None:
+            on_progress(
+                BisectProgress(step=step, boots=boots, testing=testing, remaining=remaining)
+            )
+
+    boots += 1
+    emit("full", len(base) + len(candidates))
     full = boot_jars(
         base + candidates, profile, request.timeout_seconds, request.memory, loader=loader
     )
-    boots += 1
     if full.status == "error":
         return _result("error", profile, start, cause=full.cause, boots=boots)
     if full.status == "ok":
@@ -143,6 +188,7 @@ def bisect_set(request: RunRequest, profile: VersionProfile) -> BisectResult:
     def reproduces(subset: list[Path]) -> bool:
         nonlocal boots
         boots += 1
+        emit("reduce", len(base) + len(subset))
         verdict = boot_jars(
             base + subset, profile, request.timeout_seconds, request.memory, loader=loader
         )
@@ -162,12 +208,18 @@ def bisect_set(request: RunRequest, profile: VersionProfile) -> BisectResult:
             note="No reducible candidates — every jar is a dependency provider.",
         )
 
-    minimal = ddmin(candidates, reproduces)
+    def track(size: int) -> None:
+        nonlocal remaining
+        remaining = size
+
+    minimal = ddmin(candidates, reproduces, on_candidate=track)
     members = sorted(jar_to_id.get(path.name, path.name) for path in minimal)
+    boots += 1
+    remaining = len(minimal)
+    emit("confirm", len(base) + len(minimal))
     final = boot_jars(
         base + minimal, profile, request.timeout_seconds, request.memory, loader=loader
     )
-    boots += 1
     note = (
         None
         if len(minimal) <= 2

@@ -1,8 +1,12 @@
-from collections.abc import Sequence
+import json
+import queue
+import threading
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from app.analyzer.mods import read_jars_metadata, read_mods_metadata, scan_jars, scan_mods_folder
 from app.analyzer.packs import scan_datapacks, scan_resourcepacks
@@ -50,8 +54,8 @@ from app.profile import (
 from app.resolve.apply import apply_resolution, resolution_targets, revert_resolution
 from app.resolve.generate import build_resolution_plan, export_plan
 from app.resolve.variants import collect_recipe_variants, recipe_winner_bodies
-from app.runner.bisect import bisect_set
-from app.runner.runner import detect_loader, run_set
+from app.runner.bisect import BisectProgress, bisect_set
+from app.runner.runner import detect_loader, is_docker_available, run_set
 from app.sources.discovery import discover_instances
 from app.sources.instance import detect_instance, mods_jars
 
@@ -117,6 +121,13 @@ def _resolve_for(folder: Path, version: str | None) -> tuple[VersionProfile, Ver
 def health() -> dict[str, str]:
     """Liveness probe consumed by the front to confirm the sidecar is up."""
     return {"status": "ok", "profile": settings.default_version}
+
+
+@app.get("/runner/docker")
+def runner_docker() -> dict[str, bool]:
+    """Whether the Docker daemon is reachable — drives a UI warning when it isn't,
+    since the boot runner (and the auto-test after a scan) can't run without it."""
+    return {"available": is_docker_available()}
 
 
 @app.get("/profiles", response_model=list[VersionCandidate])
@@ -198,6 +209,96 @@ def instance_scan(req: ScanRequest) -> InstanceReport:
         datapack_conflicts=dp_conflicts,
         items=build_registry_index(jars),
     )
+
+
+def _sse(event: dict[str, object]) -> str:
+    """One Server-Sent Events frame: a JSON payload on a single ``data:`` line."""
+    return f"data: {json.dumps(event)}\n\n"
+
+
+@app.post("/instance/scan/stream")
+def instance_scan_stream(req: ScanRequest) -> StreamingResponse:
+    """Streaming twin of :func:`instance_scan` for live progress feedback.
+
+    Same analysis and the same ``InstanceReport`` payload, but the body is an SSE
+    stream of ``{"phase": "progress", "percent", "label"}`` frames terminated by a
+    single ``{"phase": "done", "report": …}`` (or ``{"phase": "error", …}``).
+
+    Path/version resolution runs synchronously up front, so an invalid path 400s
+    and an ambiguous set 409s *before* the stream opens — the front keeps its
+    existing error and version-picker handling unchanged.
+    """
+    root = _require_dir(req.path)
+    instance = detect_instance(root)
+    jars = mods_jars(instance)
+    profile, detection = _resolve_for_jars(jars, req.version)
+
+    def generate() -> Iterator[str]:
+        events: queue.Queue[str | None] = queue.Queue()
+
+        def emit(percent: int, label: str) -> None:
+            events.put(_sse({"phase": "progress", "percent": percent, "label": label}))
+
+        # The heavy work runs in a worker thread that pushes progress frames onto a
+        # queue; this generator drains the queue and yields them. Phase weights sum
+        # to 100 — the two jar loops carry per-jar granularity, enrichment and packs
+        # are opaque single steps between them.
+        def run() -> None:
+            try:
+                emit(0, "Reading mods…")
+                mods = scan_jars(
+                    jars,
+                    profile,
+                    instance.folders.mods or str(root),
+                    on_progress=lambda done, total: emit(
+                        round(done / (total or 1) * 70), f"Analyzing mods ({done}/{total})"
+                    ),
+                )
+                mods.detection = detection
+
+                emit(72, "Fetching mod metadata…")
+                enrich_mods(instance, jars, mods.mods, profile.profile)
+
+                emit(80, "Scanning resource & data packs…")
+                folders = instance.folders
+                resourcepacks, rp_conflicts = scan_resourcepacks(
+                    Path(folders.resourcepacks) if folders.resourcepacks else None
+                )
+                datapacks, dp_conflicts = scan_datapacks(folders.datapacks)
+
+                items = build_registry_index(
+                    jars,
+                    on_progress=lambda done, total: emit(
+                        85 + round(done / (total or 1) * 14), f"Indexing items ({done}/{total})"
+                    ),
+                )
+
+                report = InstanceReport(
+                    instance=instance,
+                    mods=mods,
+                    resourcepacks=resourcepacks,
+                    datapacks=datapacks,
+                    resourcepack_conflicts=rp_conflicts,
+                    datapack_conflicts=dp_conflicts,
+                    items=items,
+                )
+                events.put(
+                    _sse({"phase": "done", "report": report.model_dump(by_alias=True, mode="json")})
+                )
+            except Exception as exc:  # noqa: BLE001 — any failure becomes a stream error frame
+                events.put(_sse({"phase": "error", "message": str(exc)}))
+            finally:
+                events.put(None)
+
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        while True:
+            item = events.get()
+            if item is None:
+                break
+            yield item
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @app.post("/mods/update", response_model=UpdateResult)
@@ -289,6 +390,57 @@ def runner_bisect(req: RunRequest) -> BisectResult:
     folder = _require_dir(req.path)
     profile, _ = _resolve_for(folder, req.version)
     return bisect_set(req, profile)
+
+
+@app.post("/runner/bisect/stream")
+def runner_bisect_stream(req: RunRequest) -> StreamingResponse:
+    """Streaming twin of :func:`runner_bisect` for live progress feedback.
+
+    Same ``BisectResult`` payload, but the body is an SSE stream of one
+    ``{"phase": "progress", "step", "boots", "testing", "remaining"}`` frame per
+    boot, terminated by a single ``{"phase": "done", "result": …}`` (or
+    ``{"phase": "error", …}``). Lets the UI show the (variable-length, multi-boot)
+    search is alive and how far it has narrowed.
+    """
+    folder = _require_dir(req.path)
+    profile, _ = _resolve_for(folder, req.version)
+
+    def generate() -> Iterator[str]:
+        events: queue.Queue[str | None] = queue.Queue()
+
+        def on_progress(p: BisectProgress) -> None:
+            events.put(
+                _sse(
+                    {
+                        "phase": "progress",
+                        "step": p.step,
+                        "boots": p.boots,
+                        "testing": p.testing,
+                        "remaining": p.remaining,
+                    }
+                )
+            )
+
+        def run() -> None:
+            try:
+                result = bisect_set(req, profile, on_progress=on_progress)
+                events.put(
+                    _sse({"phase": "done", "result": result.model_dump(by_alias=True, mode="json")})
+                )
+            except Exception as exc:  # noqa: BLE001 — any failure becomes a stream error frame
+                events.put(_sse({"phase": "error", "message": str(exc)}))
+            finally:
+                events.put(None)
+
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        while True:
+            item = events.get()
+            if item is None:
+                break
+            yield item
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @app.post("/resolve/variants", response_model=ResolutionVariants)

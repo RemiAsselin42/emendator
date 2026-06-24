@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useReducer, useState } from "react";
 import {
   AmbiguousVersionError,
+  type BisectProgress,
   type BisectResult,
-  bisectSet,
+  bisectSetStream,
   clearResolutionCache,
   detectInstance,
   discoverInstances,
+  fetchDockerStatus,
   fetchHealth,
   type Instance,
   type InstanceReport,
   listProfiles,
   type RunVerdict,
   type ScanResult,
-  scanInstance,
+  scanInstanceStream,
   testSet,
   type VersionCandidate,
   type VersionDetection,
@@ -107,6 +109,10 @@ interface ScanState {
   instance: Instance | null;
   scanning: boolean;
   scanError: string | null;
+  // Live scan progress (0–100) and the phase label, streamed from the backend;
+  // drives the centered spinner overlay while `scanning`.
+  progress: number;
+  progressLabel: string;
   // The exact version used for the current scan (auto-detected or user-picked).
   version: string | null;
   // Set when a scan is rejected as ambiguous (§6): drives the version picker.
@@ -116,6 +122,7 @@ interface ScanState {
 type ScanAction =
   | { type: "start" }
   | { type: "instance"; instance: Instance | null }
+  | { type: "progress"; percent: number; label: string }
   | { type: "success"; report: InstanceReport }
   | { type: "ambiguous"; detection: VersionDetection }
   | { type: "failed"; message: string }
@@ -127,6 +134,8 @@ const initialScan: ScanState = {
   instance: null,
   scanning: false,
   scanError: null,
+  progress: 0,
+  progressLabel: "",
   version: null,
   pendingDetection: null,
 };
@@ -138,8 +147,12 @@ function scanReducer(state: ScanState, action: ScanAction): ScanState {
         ...state,
         scanning: true,
         scanError: null,
+        progress: 0,
+        progressLabel: "",
         pendingDetection: null,
       };
+    case "progress":
+      return { ...state, progress: action.percent, progressLabel: action.label };
     case "instance":
       return { ...state, instance: action.instance };
     case "success":
@@ -191,6 +204,31 @@ function useBackendHealth(): boolean {
   return backendDown;
 }
 
+// Poll Docker availability so a warning toast can flag when the boot runner can't
+// run. Mirrors useBackendHealth: stays false until a check completes (no boot
+// flash), flips true only on a definitive "not available". A failed fetch means
+// the backend is down — we keep the last known Docker state so the Docker warning
+// persists alongside the backend toast (the two coexist) instead of vanishing.
+// Polled slower than health: `docker info` itself can take seconds when it's down.
+function useDockerHealth(): boolean {
+  const [dockerDown, setDockerDown] = useState(false);
+  useEffect(() => {
+    let active = true;
+    const check = () => {
+      fetchDockerStatus()
+        .then((available) => active && setDockerDown(!available))
+        .catch(() => {});
+    };
+    check();
+    const id = window.setInterval(check, 15000);
+    return () => {
+      active = false;
+      window.clearInterval(id);
+    };
+  }, []);
+  return dockerDown;
+}
+
 // Best-effort startup fetches: the version blocks offered in the manual override
 // and the modpacks auto-discovered from installed launchers (quick-select).
 function useStartupData(): {
@@ -220,9 +258,14 @@ interface Runner {
   testing: boolean;
   bisectResult: BisectResult | null;
   bisecting: boolean;
+  // Live per-boot bisection status while `bisecting`; null when idle.
+  bisectProgress: BisectProgress | null;
   onTest: () => void;
   onBisect: () => void;
   resetRunner: () => void;
+  // Boot an explicit folder at an explicit version — used to auto-run the first
+  // test straight after a scan, without waiting for `modsPath`/`version` state.
+  testTarget: (target: string, version?: string) => Promise<void>;
 }
 
 // The headless runner: a boot verdict and a bisection result, both for the current
@@ -232,13 +275,14 @@ function useRunner(version: string | null, modsPath: string | null): Runner {
   const [testing, setTesting] = useState(false);
   const [bisectResult, setBisectResult] = useState<BisectResult | null>(null);
   const [bisecting, setBisecting] = useState(false);
+  const [bisectProgress, setBisectProgress] = useState<BisectProgress | null>(null);
 
   const runTest = useCallback(
-    async (target: string) => {
+    async (target: string, ver?: string) => {
       setTesting(true);
       setVerdict(null);
       try {
-        setVerdict(await testSet(target, version ?? undefined));
+        setVerdict(await testSet(target, ver ?? version ?? undefined));
       } catch (e) {
         setVerdict({
           status: "error",
@@ -264,8 +308,9 @@ function useRunner(version: string | null, modsPath: string | null): Runner {
     async (target: string) => {
       setBisecting(true);
       setBisectResult(null);
+      setBisectProgress(null);
       try {
-        setBisectResult(await bisectSet(target, version ?? undefined));
+        setBisectResult(await bisectSetStream(target, version ?? undefined, setBisectProgress));
       } catch (e) {
         setBisectResult({
           status: "error",
@@ -278,6 +323,7 @@ function useRunner(version: string | null, modsPath: string | null): Runner {
         });
       } finally {
         setBisecting(false);
+        setBisectProgress(null);
       }
     },
     [version],
@@ -294,6 +340,7 @@ function useRunner(version: string | null, modsPath: string | null): Runner {
   const resetRunner = useCallback(() => {
     setVerdict(null);
     setBisectResult(null);
+    setBisectProgress(null);
   }, []);
 
   return {
@@ -301,9 +348,11 @@ function useRunner(version: string | null, modsPath: string | null): Runner {
     testing,
     bisectResult,
     bisecting,
+    bisectProgress,
     onTest,
     onBisect,
     resetRunner,
+    testTarget: runTest,
   };
 }
 
@@ -313,6 +362,7 @@ function useRunner(version: string | null, modsPath: string | null): Runner {
 // composition.
 export function useScanSession() {
   const backendDown = useBackendHealth();
+  const dockerDown = useDockerHealth();
   const { profiles, discovered } = useStartupData();
 
   const [path, setPath] = useState("");
@@ -331,12 +381,29 @@ export function useScanSession() {
   );
 
   const [scan, dispatch] = useReducer(scanReducer, initialScan);
-  const { result, report, instance, scanning, scanError, version, pendingDetection } = scan;
-
-  const { verdict, testing, bisectResult, bisecting, onTest, onBisect, resetRunner } = useRunner(
+  const {
+    result,
+    report,
+    instance,
+    scanning,
+    scanError,
+    progress,
+    progressLabel,
     version,
-    result?.modsPath ?? null,
-  );
+    pendingDetection,
+  } = scan;
+
+  const {
+    verdict,
+    testing,
+    bisectResult,
+    bisecting,
+    bisectProgress,
+    onTest,
+    onBisect,
+    resetRunner,
+    testTarget,
+  } = useRunner(version, result?.modsPath ?? null);
 
   // `pick` is the user's manual version choice from the ambiguity picker; when
   // absent the backend auto-detects (and rejects an ambiguous set with 409).
@@ -353,10 +420,21 @@ export function useScanSession() {
         .then((inst) => dispatch({ type: "instance", instance: inst }))
         .catch(() => dispatch({ type: "instance", instance: null }));
       try {
-        const scanReport = await scanInstance(trimmed, pick);
+        const scanReport = await scanInstanceStream(trimmed, pick, (percent, label) =>
+          dispatch({ type: "progress", percent, label }),
+        );
         dispatch({ type: "success", report: scanReport });
         setUpdatedJars(new Set());
         setTab("mods");
+        // Auto-run a first boot test so the runtime verdict appears without a
+        // manual launch. Fire-and-forget (not awaited): the scan loader closes
+        // now, the Mods view shows, and the boot runs in the background (the
+        // Runtime tab reflects its live "testing…" state). Gated on runner
+        // support, exactly like the manual Test button. Uses the freshly
+        // resolved path/version directly, sidestepping stale state.
+        if (scanReport.mods.detection?.runnerSupported ?? true) {
+          void testTarget(scanReport.mods.modsPath, scanReport.mods.profile);
+        }
       } catch (e) {
         setTab("scan");
         if (e instanceof AmbiguousVersionError) {
@@ -371,7 +449,7 @@ export function useScanSession() {
         dispatch({ type: "settled" });
       }
     },
-    [resetRunner],
+    [resetRunner, testTarget],
   );
 
   // Native folder drop, Tauri only. In plain browser dev the internals are
@@ -426,6 +504,7 @@ export function useScanSession() {
 
   return {
     backendDown,
+    dockerDown,
     path,
     setPath,
     result,
@@ -433,11 +512,14 @@ export function useScanSession() {
     instance,
     scanning,
     scanError,
+    progress,
+    progressLabel,
     dragging,
     verdict,
     testing,
     bisectResult,
     bisecting,
+    bisectProgress,
     tab,
     setTab,
     version,

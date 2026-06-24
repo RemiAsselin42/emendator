@@ -1,4 +1,5 @@
 import type {
+  BisectProgress,
   BisectResult,
   Instance,
   InstanceReport,
@@ -279,18 +280,81 @@ export function ScanTab({
   );
 }
 
+// Centered scan-progress overlay: a spinner with the live percentage and phase
+// label below it. Shown over the whole window while a scan is in flight, so the
+// feedback is unmissable rather than buried in the Scan button.
+export function ScanProgressOverlay({ percent, label }: { percent: number; label: string }) {
+  return (
+    <div className="scan-overlay" role="status" aria-live="polite">
+      <div className="scan-overlay-card">
+        <svg
+          className="scan-spinner spin"
+          width="56"
+          height="56"
+          viewBox="0 0 16 16"
+          aria-hidden="true"
+        >
+          <circle
+            cx="8"
+            cy="8"
+            r="6"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeDasharray="28"
+            strokeDashoffset="10"
+          />
+        </svg>
+        <span className="scan-percent">{percent}%</span>
+        <span className="scan-overlay-label">{label || "Scanning…"}</span>
+      </div>
+    </div>
+  );
+}
+
+// A small inline spinner for the Runtime nav item, marking the auto-boot running
+// in the background after a scan (same glyph as the in-view "Booting…" spinner).
+function NavSpinner() {
+  return (
+    <svg
+      className="spin nav-spinner"
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      role="img"
+      aria-label="auto-test running"
+    >
+      <circle
+        cx="8"
+        cy="8"
+        r="6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeDasharray="28"
+        strokeDashoffset="10"
+      />
+    </svg>
+  );
+}
+
 // Panel navigation: the fixed tabs (with conflict/recipe counts) plus the content
-// tabs that only appear when the instance carries that content.
+// tabs that only appear when the instance carries that content. `testing` marks
+// the Runtime tab while a background boot test runs.
 export function Sidebar({
   tab,
   setTab,
   conflictCount,
   contentTabs,
+  testing,
 }: {
   tab: Tab;
   setTab: (tab: Tab) => void;
   conflictCount: number;
   contentTabs: ContentTab[];
+  testing: boolean;
 }) {
   return (
     <nav className="sidebar" aria-label="panels">
@@ -303,6 +367,7 @@ export function Sidebar({
         >
           {t.label}
           {t.id === "conflicts" && ` (${conflictCount})`}
+          {t.id === "runtime" && testing && <NavSpinner />}
         </button>
       ))}
       {contentTabs.map((t) => (
@@ -327,6 +392,7 @@ function RuntimeTab({
   testing,
   bisecting,
   bisectResult,
+  bisectProgress,
   onTest,
   onBisect,
   onResolve,
@@ -336,6 +402,7 @@ function RuntimeTab({
   testing: boolean;
   bisecting: boolean;
   bisectResult: BisectResult | null;
+  bisectProgress: BisectProgress | null;
   onTest: () => void;
   onBisect: () => void;
   onResolve: () => void;
@@ -348,6 +415,7 @@ function RuntimeTab({
       onBisect={onBisect}
       bisecting={bisecting}
       bisectResult={bisectResult}
+      bisectProgress={bisectProgress}
       runnerSupported={result.detection?.runnerSupported ?? true}
       block={result.detection?.block ?? null}
       onResolve={onResolve}
@@ -366,6 +434,7 @@ export function CoreTabPanel({
   testing,
   bisecting,
   bisectResult,
+  bisectProgress,
   updatedJars,
   onUpdated,
   onTest,
@@ -383,6 +452,7 @@ export function CoreTabPanel({
   testing: boolean;
   bisecting: boolean;
   bisectResult: BisectResult | null;
+  bisectProgress: BisectProgress | null;
   updatedJars: Set<string>;
   onUpdated: (jar: string) => void;
   onTest: () => void;
@@ -403,6 +473,7 @@ export function CoreTabPanel({
           testing={testing}
           bisecting={bisecting}
           bisectResult={bisectResult}
+          bisectProgress={bisectProgress}
           onTest={onTest}
           onBisect={onBisect}
           onResolve={onResolveDeps}

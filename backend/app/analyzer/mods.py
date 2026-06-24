@@ -15,6 +15,7 @@ import hashlib
 import io
 import json
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -212,18 +213,29 @@ def read_mods_metadata(folder: Path) -> tuple[list[Mod], list[ScanError]]:
     return read_jars_metadata(sorted(folder.glob("*.jar")))
 
 
-def scan_jars(jars: list[Path], profile: VersionProfile, mods_path: str = "") -> ScanResult:
+def scan_jars(
+    jars: list[Path],
+    profile: VersionProfile,
+    mods_path: str = "",
+    on_progress: Callable[[int, int], None] | None = None,
+) -> ScanResult:
     """Scan an explicit list of jars and detect static conflicts.
 
     The unit the instance layer drives over a resolved ``mods/`` folder;
     :func:`scan_mods_folder` is a thin wrapper that globs a folder.
+
+    ``on_progress(done, total)`` is invoked after each jar is indexed (the
+    dominant per-jar cost), so a caller can stream live scan progress.
     """
     indexes: list[JarIndex] = []
     untestable: list[UntestableMod] = []
     errors: list[ScanError] = []
 
-    for jar_path in jars:
+    total = len(jars)
+    for done, jar_path in enumerate(jars, start=1):
         index, error = build_jar_index(jar_path, profile)
+        if on_progress is not None:
+            on_progress(done, total)
         if error is not None:
             errors.append(error)
             continue
