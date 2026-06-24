@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Emendator",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "identifier": "io.github.remiasselin42.emendator",
   "build": {
     "frontendDist": "../dist",
@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "Emendator",
-        "width": 1000,
-        "height": 700,
+        "width": 1920,
+        "height": 1080,
         "minWidth": 720,
         "minHeight": 560,
         "resizable": true,
