@@ -103,6 +103,16 @@ def install_mod(mods_dir: Path, mod_id: str, loader: Loader, game_version: str) 
             message="Re-enabled a disabled mod (no download).",
         )
 
+    # A platform pseudo-dependency (the game, java, the loader) is intentionally
+    # non-installable — neither provider carries it. Say so plainly instead of
+    # letting it fall through to the generic "check the spelling" not_found.
+    if mod_id in modrinth.NOT_INSTALLABLE:
+        return InstallResult(
+            status="not_found",
+            mod_id=mod_id,
+            message=f"'{mod_id}' is provided by the game or loader — not an installable mod.",
+        )
+
     from_curseforge = False
     info = modrinth.find_install(mod_id, loader, game_version)
     if info is None and settings.curseforge_api_key:
