@@ -1,3 +1,4 @@
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -73,6 +74,25 @@ def test_run_set_reports_when_docker_unavailable(tmp_path: Path, monkeypatch) ->
     assert verdict.cause is not None
     assert "docker" in verdict.cause.summary.lower()
     assert verdict.profile == "1.21.1"
+
+
+def test_run_set_reports_when_docker_run_times_out(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(runner, "is_docker_available", lambda: True)
+
+    def fake_run(args, *posargs, **kwargs):
+        # The launch (`docker run -d ...`) hangs past the timeout; cleanup
+        # (`docker rm -f ...`) must still succeed so it cannot mask the verdict.
+        if args[1] == "run":
+            raise subprocess.TimeoutExpired(args, kwargs.get("timeout", 0))
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+
+    verdict = run_set(RunRequest(path=str(tmp_path)), PROFILE)
+    assert verdict.status == "error"
+    assert verdict.cause is not None
+    assert verdict.cause.category == "startup_error"
+    assert "docker run" in verdict.cause.summary.lower()
 
 
 def test_decide_maps_outcomes() -> None:

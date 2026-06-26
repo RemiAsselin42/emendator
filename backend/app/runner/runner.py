@@ -13,6 +13,7 @@ through the CLI to avoid an SDK dependency; the daemon being down yields a clean
 ``error`` verdict rather than an exception.
 """
 
+import contextlib
 import shutil
 import subprocess
 import tempfile
@@ -50,7 +51,13 @@ def detect_loader(folder: Path) -> Loader:
 
 
 _POLL_SECONDS = 3.0
-_DOCKER_CALL_TIMEOUT = 30
+# `docker run -d` is detached, so it normally returns in well under a second.
+# The slow case is the daemon waking its WSL2 backend from idle: `docker info`
+# (the is_docker_available probe) answers from the API instantly, but the first
+# real container start has to spin the VM back up, which can take well over 30s.
+# Give it generous headroom; a true hang past this still degrades to a clean
+# `error` verdict (see boot_jars) rather than a 500.
+_DOCKER_CALL_TIMEOUT = 120
 # Running mods = arbitrary code (§8). Drop every Linux capability and re-add only
 # what the itzg entrypoint needs to fix permissions and drop to its unprivileged
 # user. Combined with no-new-privileges, --pids-limit and --memory, this confines
@@ -143,12 +150,20 @@ def boot_jars(
         for jar in jar_paths:
             shutil.copy2(jar, mods_dir / jar.name)
 
-        launched = subprocess.run(
-            build_run_args(container, workdir, memory, profile, network, loader),
-            capture_output=True,
-            text=True,
-            timeout=_DOCKER_CALL_TIMEOUT,
-        )
+        try:
+            launched = subprocess.run(
+                build_run_args(container, workdir, memory, profile, network, loader),
+                capture_output=True,
+                text=True,
+                timeout=_DOCKER_CALL_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            return _error(
+                profile,
+                start,
+                f"docker run did not return within {_DOCKER_CALL_TIMEOUT}s "
+                "(Docker Desktop may be waking from idle — retry in a moment).",
+            )
         if launched.returncode != 0:
             return _error(profile, start, "docker run failed", excerpt=launched.stderr.strip())
 
@@ -165,7 +180,11 @@ def boot_jars(
             log_tail=tail(log_text, 40),
         )
     finally:
-        subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+        # Best-effort: a timed-out `docker run` can leave the container half-created
+        # on the daemon. Force-remove it, but bound the call so cleanup can never
+        # hang the request itself (the daemon may still be busy from the timeout).
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=30)
         shutil.rmtree(workdir, ignore_errors=True)
 
 
