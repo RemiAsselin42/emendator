@@ -59,7 +59,7 @@ from app.runner.runner import detect_loader, is_docker_available, run_set
 from app.sources.discovery import discover_instances
 from app.sources.instance import detect_instance, mods_jars
 
-app = FastAPI(title="Emendator backend", version="0.1.0")
+app = FastAPI(title="Emendator backend", version="0.1.2")
 
 # Fold a UI-stored CurseForge key (if any) into live settings before serving, so
 # the install fallback is armed without a restart. Env-provided keys still win.
