@@ -46,7 +46,7 @@ typography:
     fontWeight: 600
     lineHeight: 1
 rounded:
-  md: 8px
+  md: 0px
 spacing:
   sm: 8px
   md: 16px
@@ -124,7 +124,7 @@ Five roles, plus one text color for accents.
 - **background `#171917` (green grey)** — global background, present everywhere.
 - **surface `#404741` (light green grey)** — dual role: default **border color**, and **rare**
   secondary surface (selected row, active area). Do not use as a generalized second background.
-- **text `#F8F5FC` (grey white)** — body text on dark backgrounds.
+- **text `#dde1de` (grey white)** — body text on dark backgrounds.
 - **on-accent `#171917`** — text placed **on** green. Essential: light text on green
   fails contrast; dark text passes.
 

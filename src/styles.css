@@ -95,7 +95,7 @@ a:hover {
 .container {
   max-width: 1080px;
   margin: 0 auto;
-  padding: var(--space-lg);
+  padding: var(--space-md);
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
@@ -1242,11 +1242,15 @@ a:hover {
   color: var(--color-secondary);
 }
 
+.conflict {
+  margin-top: 0;
+}
+
 .conflict-groups {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
-  overflow: auto;
+  overflow: hidden;
   margin-top: var(--space-sm);
   /* useViewportFill sets an exact inline `max-height` (viewport minus the list's
      top offset, the siblings below it, and --vfill-trim) during commit, before first
@@ -1311,8 +1315,11 @@ a:hover {
 .conflict-list {
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 23em);
   overflow: auto;
+  /* useViewportFill(climb) sets an exact inline `max-height` during commit (viewport
+     minus the filters/header above and the sibling group heads below), before first
+     paint. This value is only a safety net if that script never runs. */
+  max-height: calc(100dvh - 23em);
 }
 
 .conflict-row {
@@ -1437,7 +1444,7 @@ a:hover {
   flex-direction: column;
   align-items: center;
   gap: var(--space-sm);
-  color: var(--color-primary);
+  opacity: 0.8;
 }
 
 /* Runtime verdict status colors. */
@@ -1463,10 +1470,53 @@ a:hover {
   opacity: 1;
 }
 
-.cause-excerpt,
-.log-tail {
+/* Logs sub-tab: the gathered crash evidence with a top-right Copy action. */
+.logs-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.logs-container {
+  display: flex;
+  flex-direction: row;
+  gap: var(--space-sm);
+}
+
+.log-block {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.log-label {
   font-family: var(--font-body);
-  padding: var(--space-md) 0 0 0;
+  margin: 0 0 var(--space-sm);
+  font-weight: 600;
+}
+
+/* Compact icon+label button (shares the outline look of .btn-secondary). */
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  background: none;
+  border: var(--border);
+  border-radius: var(--radius);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  padding: var(--space-md);
+  cursor: pointer;
+  transition: var(--transition);
+  max-height: 52px;
+}
+
+.copy-btn:hover,
+.copy-btn.copied {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 .log {
@@ -1477,8 +1527,24 @@ a:hover {
   border: var(--border);
   border-radius: var(--radius);
   padding: var(--space-sm);
-  max-height: 240px;
+  max-height: calc(100vh - 25em - var(--space-md));
   overflow: auto;
+}
+
+/* Per-line severity colouring inside .log (set in views.tsx › LogLines), so the
+   eye lands on the failure: green for the clean-start line, amber for warnings,
+   red for errors/stack traces, default text for everything else. */
+.log-good {
+  color: var(--color-primary);
+}
+.log-warn {
+  color: var(--color-warn);
+}
+.log-error {
+  color: var(--color-error);
+}
+.log-info {
+  color: var(--color-text);
 }
 
 /* Missing-dependency installer under a runtime verdict: one row per flagged mod,
@@ -1543,6 +1609,16 @@ a:hover {
   opacity: 0.8;
 }
 
+/* The note line inside a logs head: clamp its height so a long message can't
+   push the Copy action off-row. Placed after the base `.note` so its override
+   wins on source order (avoids a descending-specificity lint). */
+.logs-head > .note {
+  margin: 0 var(--space-sm) 0 0;
+  opacity: 0.8;
+  max-height: 52px;
+  overflow: auto;
+}
+
 .note-ok {
   color: var(--color-primary);
   text-align: center;
@@ -1554,6 +1630,8 @@ a:hover {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+  overflow: hidden;
+  max-height: calc(100dvh - 19em);
 }
 
 /* Section divider between the mixin resolver and the generated-config block. */

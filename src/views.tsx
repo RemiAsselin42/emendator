@@ -45,6 +45,7 @@ import {
   CONSEQUENCE_HINT,
   CONSEQUENCE_LABEL,
   CONSEQUENCE_ORDER,
+  type Consequence,
   conflictByMod,
   conflictConsequence,
   conflictItems,
@@ -233,6 +234,40 @@ function ConflictRow({ c, mixinExports }: { c: Conflict; mixinExports: Set<strin
   );
 }
 
+// One accordion panel. Its list fills the viewport when open; `climb` reserves room
+// for the filters/header above and the sibling panels' heads below, so they stay on
+// screen while only the open list scrolls. The hook lives here (one instance per
+// panel) rather than in ConflictsView: the ref tracks a single node, so a shared ref
+// across all rendered panels would only ever wire up the last one.
+function ConflictGroupPanel({
+  cons,
+  rows,
+  accProps,
+  mixinExports,
+}: {
+  cons: Consequence;
+  rows: Conflict[];
+  accProps: ReturnType<ReturnType<typeof useAccordion>["item"]>;
+  mixinExports: Set<string> | null;
+}) {
+  const fillList = useViewportFill(true);
+  return (
+    <details className="conflict-group" {...accProps}>
+      <summary className="group-head">
+        <Chevron />
+        <span className="group-name">{CONSEQUENCE_LABEL[cons]}</span>
+        <span className="group-count">· {rows.length}</span>
+        <span className="group-hint">{CONSEQUENCE_HINT[cons]}</span>
+      </summary>
+      <div className="conflict-list" ref={fillList}>
+        {rows.map((c) => (
+          <ConflictRow key={conflictKey(c)} c={c} mixinExports={mixinExports} />
+        ))}
+      </div>
+    </details>
+  );
+}
+
 export function ConflictsView({
   conflicts: allConflicts,
   verdict,
@@ -294,22 +329,16 @@ export function ConflictsView({
       {rows.length === 0 ? (
         <p className="note">No conflicts at the selected severities.</p>
       ) : (
-        <div className="conflict-groups" ref={fillGroups}>
+        <div className="conflict-groups conflict" ref={fillGroups}>
           {groups.map((g) => (
             // Accordion: one bucket open at a time (opening one closes the others).
-            <details key={g.cons} className="conflict-group" {...acc.item(g.cons)}>
-              <summary className="group-head">
-                <Chevron />
-                <span className="group-name">{CONSEQUENCE_LABEL[g.cons]}</span>
-                <span className="group-count">· {g.rows.length}</span>
-                <span className="group-hint">{CONSEQUENCE_HINT[g.cons]}</span>
-              </summary>
-              <div className="conflict-list">
-                {g.rows.map((c) => (
-                  <ConflictRow key={conflictKey(c)} c={c} mixinExports={mixinExports} />
-                ))}
-              </div>
-            </details>
+            <ConflictGroupPanel
+              key={g.cons}
+              cons={g.cons}
+              rows={g.rows}
+              accProps={acc.item(g.cons)}
+              mixinExports={mixinExports}
+            />
           ))}
         </div>
       )}
@@ -351,6 +380,49 @@ function CheckIcon() {
         strokeLinejoin="round"
       />
     </svg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <rect
+        x="5.5"
+        y="5.5"
+        width="8"
+        height="8"
+        rx="1.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+      />
+      <path
+        d="M10.5 5.5V3.5A1.5 1.5 0 0 0 9 2H4a1.5 1.5 0 0 0-1.5 1.5V9A1.5 1.5 0 0 0 4 10.5h1.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+// Copy-to-clipboard button with a brief "Copied" confirmation. Used by the Logs
+// sub-tab to lift the whole crash dump into a bug report in one click.
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = useCallback(() => {
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  }, [text]);
+  return (
+    <button type="button" className={copied ? "copy-btn copied" : "copy-btn"} onClick={onCopy}>
+      {copied ? <CheckIcon /> : <CopyIcon />}
+      {copied ? "Copied" : "Copy"}
+    </button>
   );
 }
 
@@ -1020,7 +1092,7 @@ function installRowTitle(state: InstallState, msg: string | null, modId: string)
     case "installing":
       return "installing…";
     default:
-      return `install ${modId} from Modrinth`;
+      return `install ${modId}`;
   }
 }
 
@@ -1263,12 +1335,6 @@ function VerdictCause({ cause, onResolve }: { cause: RunCause; onResolve: () => 
           </ul>
         </>
       )}
-      {cause.excerpt && (
-        <details className="cause-excerpt">
-          <summary>Causes</summary>
-          <pre className="log">{cause.excerpt}</pre>
-        </details>
-      )}
       {cause.category === "missing_dependency" && cause.mods.length > 0 && (
         <button type="button" className="btn-secondary resolve-handoff" onClick={onResolve}>
           Fix missing dependencies
@@ -1280,7 +1346,17 @@ function VerdictCause({ cause, onResolve }: { cause: RunCause; onResolve: () => 
 
 // The verdict readout: status line, the suspected cause (with the Deps handoff
 // when that's the category), and the log tail.
-function VerdictPanel({ verdict, onResolve }: { verdict: RunVerdict; onResolve: () => void }) {
+function VerdictPanel({
+  verdict,
+  onResolve,
+  onShowLogs,
+}: {
+  verdict: RunVerdict;
+  onResolve: () => void;
+  onShowLogs: () => void;
+}) {
+  const hasLogs =
+    Boolean(verdict.cause?.excerpt) || (Boolean(verdict.logTail) && verdict.status !== "error");
   return (
     <div className="panel">
       <p>
@@ -1291,11 +1367,14 @@ function VerdictPanel({ verdict, onResolve }: { verdict: RunVerdict; onResolve: 
           ` · ${verdict.mixinExports.length} mixin-transformed classes (ground truth)`}
       </p>
       {verdict.cause && <VerdictCause cause={verdict.cause} onResolve={onResolve} />}
-      {verdict.logTail && verdict.status !== "error" && (
-        <details className="log-tail">
-          <summary>Log tail</summary>
-          <pre className="log">{verdict.logTail}</pre>
-        </details>
+      {hasLogs && (
+        <p className="note">
+          Full cause excerpt and log tail are under{" "}
+          <button type="button" className="note-link" onClick={onShowLogs}>
+            Logs
+          </button>
+          .
+        </p>
       )}
     </div>
   );
@@ -1310,11 +1389,13 @@ function TestView({
   runnerSupported,
   block,
   onResolve,
+  onShowLogs,
 }: {
   verdict: RunVerdict | null;
   runnerSupported: boolean;
   block: string | null;
   onResolve: () => void;
+  onShowLogs: () => void;
 } & TestProps) {
   return (
     <div className={`view${verdict ? "" : " view-centered"}`}>
@@ -1324,7 +1405,9 @@ function TestView({
       </section>
 
       {verdict ? (
-        <VerdictPanel verdict={verdict} onResolve={onResolve} />
+        <VerdictPanel verdict={verdict} onResolve={onResolve} onShowLogs={onShowLogs} />
+      ) : testing ? (
+        <p className="note">Boot running, please wait for the result…</p>
       ) : (
         <p className="note">No boot yet. Run a test to get a runtime verdict.</p>
       )}
@@ -1388,7 +1471,7 @@ function BisectStatus({ progress }: { progress: BisectProgress | null }) {
   else if (progress.step === "full") detail = "Booting the full set to reproduce the crash…";
   else if (progress.step === "confirm")
     detail = `Confirming the minimal set (${progress.remaining} mod${plural(progress.remaining)})…`;
-  else detail = `Narrowing — ${progress.remaining} mod${plural(progress.remaining)} still in play`;
+  else detail = `Narrowing... ${progress.remaining} mod${plural(progress.remaining)} still in play`;
 
   return (
     <div className="bisect-status" role="status" aria-live="polite">
@@ -1446,7 +1529,115 @@ function BisectView({
   );
 }
 
-type RuntimeSub = "test" | "bisect";
+type LogSeverity = "good" | "warn" | "error" | "info";
+
+// Minecraft server logs carry their level in the thread tag ([.../WARN],
+// [.../ERROR], [.../FATAL]); stack traces trail an exception line ("Caused by:",
+// "<Class>Exception:", "\tat …", "… N more"). Colour each line by severity so the
+// eye lands on the failure instead of re-reading the whole tail.
+function logSeverity(line: string): LogSeverity {
+  if (/Done \([\d.]+s\)! For help/i.test(line)) return "good";
+  if (
+    /\/(?:ERROR|FATAL)\]/.test(line) ||
+    /[\w.]+(?:Exception|Error):/.test(line) ||
+    /^\s*(?:Caused by:|at\s|\.{3} \d+ more)/.test(line)
+  )
+    return "error";
+  if (/\/WARN\]/.test(line)) return "warn";
+  return "info";
+}
+
+// Per-line colouring for a <pre className="log">. Each line is its own coloured
+// span; the newline lives inside the span (except the last) so the raw text — and
+// its copy-to-clipboard fidelity via CopyButton, which reads the source string —
+// is preserved exactly.
+function LogLines({ text }: { text: string }) {
+  const lines = text.split("\n");
+  return (
+    <>
+      {lines.map((line, i) => (
+        // Static, stateless list re-rendered wholesale per verdict — never
+        // reordered or inserted into — so the line index is a safe, stable key.
+        // biome-ignore lint/suspicious/noArrayIndexKey: see above
+        <span key={i} className={`log-line log-${logSeverity(line)}`}>
+          {line}
+          {i < lines.length - 1 ? "\n" : ""}
+        </span>
+      ))}
+    </>
+  );
+}
+
+// "Logs" sub-tab: every piece of raw crash evidence (the suspected-cause excerpt
+// and the log tail) gathered in one place and shown expanded, with a one-click
+// copy of the whole dump for a bug report. The Test sub-tab links here instead of
+// inlining the disclosures.
+function LogsView({ verdict, running }: { verdict: RunVerdict | null; running: boolean }) {
+  const cause = verdict?.cause ?? null;
+  const excerpt = cause?.excerpt ?? null;
+  // Mirror the Test verdict: an "error" status carried no meaningful log tail.
+  const logTail = verdict && verdict.status !== "error" ? verdict.logTail : null;
+
+  if (!verdict) {
+    return (
+      <div className="view view-centered">
+        <p className="note">
+          {running
+            ? "Boot running, please wait for the result…"
+            : "No boot yet. Run a test to collect crash logs."}
+        </p>
+      </div>
+    );
+  }
+  if (!excerpt && !logTail) {
+    return (
+      <div className="view view-centered">
+        <p className="note">No crash logs — the last test left no cause excerpt or log tail.</p>
+      </div>
+    );
+  }
+
+  const dump = [
+    cause && `${cause.category}: ${cause.summary}`,
+    excerpt && `Causes\n${excerpt}`,
+    logTail && `Log tail\n${logTail}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  return (
+    <div className="view">
+      <div className="logs-head">
+        {cause && (
+          <p className="note">
+            {cause.category}: {cause.summary}
+          </p>
+        )}
+        <CopyButton text={dump} />
+      </div>
+      <div className="note logs-container">
+        {excerpt && (
+          <section className="log-block">
+            <h3 className="log-label">Causes</h3>
+            <pre className="log">
+              <LogLines text={excerpt} />
+            </pre>
+          </section>
+        )}
+        {logTail && (
+          <section className="log-block">
+            <h3 className="log-label">Log tail</h3>
+            <pre className="log">
+              <LogLines text={logTail} />
+            </pre>
+          </section>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type RuntimeSub = "test" | "bisect" | "logs";
 
 // "Runtime" tab: a single panel split into two sub-tabs — Test (boot the set) and
 // Bisect (isolate the guilty subset) — that share the same verdict/bisect state.
@@ -1474,11 +1665,10 @@ export function RuntimeView({
   const [sub, setSub] = useState<RuntimeSub>("test");
   return (
     <div className="view">
-      <div className="subtabs" role="tablist">
+      <div className="subtabs">
         <button
           type="button"
-          role="tab"
-          aria-selected={sub === "test"}
+          aria-pressed={sub === "test"}
           className={sub === "test" ? "chip chip-on" : "chip"}
           onClick={() => setSub("test")}
         >
@@ -1486,16 +1676,23 @@ export function RuntimeView({
         </button>
         <button
           type="button"
-          role="tab"
-          aria-selected={sub === "bisect"}
+          aria-pressed={sub === "bisect"}
           className={sub === "bisect" ? "chip chip-on" : "chip"}
           onClick={() => setSub("bisect")}
         >
           Bisect
         </button>
+        <button
+          type="button"
+          aria-pressed={sub === "logs"}
+          className={sub === "logs" ? "chip chip-on" : "chip"}
+          onClick={() => setSub("logs")}
+        >
+          Logs
+        </button>
       </div>
 
-      {sub === "test" ? (
+      {sub === "test" && (
         <TestView
           verdict={verdict}
           onTest={onTest}
@@ -1503,8 +1700,10 @@ export function RuntimeView({
           runnerSupported={runnerSupported}
           block={block}
           onResolve={onResolve}
+          onShowLogs={() => setSub("logs")}
         />
-      ) : (
+      )}
+      {sub === "bisect" && (
         <BisectView
           onBisect={onBisect}
           bisecting={bisecting}
@@ -1514,6 +1713,7 @@ export function RuntimeView({
           block={block}
         />
       )}
+      {sub === "logs" && <LogsView verdict={verdict} running={testing || bisecting} />}
     </div>
   );
 }
@@ -1576,11 +1776,10 @@ export function ResourcePacksView({
   const [sub, setSub] = useState<"packs" | "overrides">("packs");
   return (
     <div className="view">
-      <div className="subtabs" role="tablist">
+      <div className="subtabs">
         <button
           type="button"
-          role="tab"
-          aria-selected={sub === "packs"}
+          aria-pressed={sub === "packs"}
           className={sub === "packs" ? "chip chip-on" : "chip"}
           onClick={() => setSub("packs")}
         >
@@ -1588,8 +1787,7 @@ export function ResourcePacksView({
         </button>
         <button
           type="button"
-          role="tab"
-          aria-selected={sub === "overrides"}
+          aria-pressed={sub === "overrides"}
           className={sub === "overrides" ? "chip chip-on" : "chip"}
           onClick={() => setSub("overrides")}
         >
@@ -1637,11 +1835,10 @@ export function DatapacksView({ packs, conflicts }: { packs: Datapack[]; conflic
   const [sub, setSub] = useState<"packs" | "overrides">("packs");
   return (
     <div className="view">
-      <div className="subtabs" role="tablist">
+      <div className="subtabs">
         <button
           type="button"
-          role="tab"
-          aria-selected={sub === "packs"}
+          aria-pressed={sub === "packs"}
           className={sub === "packs" ? "chip chip-on" : "chip"}
           onClick={() => setSub("packs")}
         >
@@ -1649,8 +1846,7 @@ export function DatapacksView({ packs, conflicts }: { packs: Datapack[]; conflic
         </button>
         <button
           type="button"
-          role="tab"
-          aria-selected={sub === "overrides"}
+          aria-pressed={sub === "overrides"}
           className={sub === "overrides" ? "chip chip-on" : "chip"}
           onClick={() => setSub("overrides")}
         >
@@ -2102,9 +2298,9 @@ function MixinResolver({
         {summary && <span className="note">{summary}</span>}
         {verdict && !testing && (
           <span className="note">
-            last boot:{" "}
+            Last boot{" "}
             <span className={`run-${verdict.status}`}>{verdict.status.toUpperCase()}</span>
-            {verdict.cause && ` · ${verdict.cause.summary}`}
+            {verdict.cause && ` : ${verdict.cause.summary}`}
           </span>
         )}
       </section>
@@ -2734,13 +2930,12 @@ export function ResolutionView({
 
   return (
     <div className="view">
-      <div className="subtabs" role="tablist">
+      <div className="subtabs">
         {RESOLUTION_SUBS.map((s) => (
           <button
             key={s.id}
             type="button"
-            role="tab"
-            aria-selected={sub === s.id}
+            aria-pressed={sub === s.id}
             className={sub === s.id ? "chip chip-on" : "chip"}
             onClick={() => setSub(s.id)}
           >
