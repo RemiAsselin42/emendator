@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Neo)Forge 1.20.1/1.21.1 (`config/mixinhelper.json`), blacklisting by mixin class name —
   the one identifier that needs no mapping work. Both slugs install via the existing
   `/mods/install` flow (`app/resolve/mixin_filters.py`).
+- **Version rollback + known-incompatibility signal.** `POST /mods/rollback` swaps a jar for
+  the Modrinth version released just before it (same verified atomic flow as update) — the
+  "downgrade to known-good" lever when the current build introduced a conflict. Enrichment
+  now also reads each version's Modrinth dependency metadata and resolves `incompatible`
+  declarations against the pack: `Mod.incompatibleWith` lists the in-pack mods a build is
+  formally incompatible with (`app/enrich/modrinth.py`, `app/enrich/install.py`).
 
 ### Changed
 

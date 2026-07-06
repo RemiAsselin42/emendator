@@ -60,6 +60,14 @@ def enrich(jars: list[Path], mods: list[Mod], game_version: str, loader: Loader)
     loaders = [_LOADER_NAMES[loader]] if loader in _LOADER_NAMES else []
     latest = _updates(sha1s, loaders, game_version) if loaders else {}
 
+    # project id -> in-pack mod id, to resolve incompatibility declarations.
+    mod_by_project: dict[str, str] = {}
+    for mod in mods:
+        sha1 = by_jar_sha1.get(mod.jar)
+        version = found.get(sha1) if sha1 else None
+        if isinstance(version, dict) and isinstance(version.get("project_id"), str):
+            mod_by_project[version["project_id"]] = mod.id
+
     for mod in mods:
         sha1 = by_jar_sha1.get(mod.jar)
         version = found.get(sha1) if sha1 else None
@@ -77,6 +85,24 @@ def enrich(jars: list[Path], mods: list[Mod], game_version: str, loader: Loader)
                 mod.latest_version = newest_number
                 if isinstance(current, str):
                     mod.update_available = newest_number != current
+        mod.incompatible_with = _incompatible_in_pack(version, mod_by_project, mod.id)
+
+
+def _incompatible_in_pack(
+    version: dict[str, Any], mod_by_project: dict[str, str], own_id: str
+) -> list[str]:
+    """In-pack mod ids this version declares ``incompatible`` on Modrinth."""
+    dependencies = version.get("dependencies")
+    if not isinstance(dependencies, list):
+        return []
+    hits: set[str] = set()
+    for dep in dependencies:
+        if not isinstance(dep, dict) or dep.get("dependency_type") != "incompatible":
+            continue
+        other = mod_by_project.get(dep.get("project_id") or "")
+        if other and other != own_id:
+            hits.add(other)
+    return sorted(hits)
 
 
 def find_update(jar_path: Path, loader: Loader, game_version: str) -> dict[str, Any] | None:
@@ -120,6 +146,48 @@ def find_update(jar_path: Path, loader: Loader, game_version: str) -> dict[str, 
         "version_number": version.get("version_number"),
         "current_sha1": sha1,
     }
+
+
+def find_previous(jar_path: Path, loader: Loader, game_version: str) -> dict[str, Any] | None:
+    """The Modrinth version released just before the installed one (for rollback).
+
+    Identifies the jar by sha1, lists the project's versions for the pack's
+    loader + MC version (newest first), and returns the primary file of the one
+    following the installed version in that order. ``None`` when the jar isn't
+    on Modrinth, is already the oldest compatible build, or anything fails.
+    """
+    if loader not in _LOADER_NAMES:
+        return None
+    sha1 = _sha1(jar_path)
+    if not sha1:
+        return None
+    data = _api_post("/v2/version_files", {"hashes": [sha1], "algorithm": "sha1"})
+    current = data.get(sha1) if isinstance(data, dict) else None
+    if not isinstance(current, dict):
+        return None
+    project_id, current_id = current.get("project_id"), current.get("id")
+    if not isinstance(project_id, str) or not isinstance(current_id, str):
+        return None
+    versions = _project_versions(project_id, loader, game_version) or []
+    versions.sort(key=lambda v: str(v.get("date_published") or ""), reverse=True)
+    ids = [v.get("id") for v in versions]
+    try:
+        index = ids.index(current_id)
+    except ValueError:
+        # Installed version filtered out (e.g. other-loader build): fall back to
+        # the newest strictly-older release by date.
+        published = str(current.get("date_published") or "")
+        older = [v for v in versions if str(v.get("date_published") or "") < published]
+        if not older:
+            return None
+        info = _primary_file(older[0], project_id)
+    else:
+        if index + 1 >= len(versions):
+            return None  # already the oldest compatible build
+        info = _primary_file(versions[index + 1], project_id)
+    if info is not None:
+        info["current_sha1"] = sha1
+    return info
 
 
 def find_install(mod_id: str, loader: Loader, game_version: str) -> dict[str, Any] | None:

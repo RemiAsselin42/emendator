@@ -14,7 +14,7 @@ from app.analyzer.registry_index import build_registry_index
 from app.config import settings
 from app.credentials import load_into_settings, set_curseforge_key
 from app.enrich import curseforge, enrich_mods
-from app.enrich.install import disable_mod, enable_mod, install_mod, update_mod
+from app.enrich.install import disable_mod, enable_mod, install_mod, rollback_mod, update_mod
 from app.models import (
     ApplyRequest,
     ApplyResult,
@@ -314,6 +314,20 @@ def mods_update(req: UpdateRequest) -> UpdateResult:
     loader = req.loader or detect_loader(mods_dir)
     game_version = req.version or _resolve_for(mods_dir, None)[0].profile
     return update_mod(mods_dir, req.jar, loader, game_version)
+
+
+@app.post("/mods/rollback", response_model=UpdateResult)
+def mods_rollback(req: UpdateRequest) -> UpdateResult:
+    """Roll one jar back to the Modrinth version released just before it.
+
+    Explicit user action from the mixin resolver: when the current build
+    introduced a conflict, one release back is the cheapest safe move. Same
+    verified, atomic swap as ``/mods/update``; no-op on any failure.
+    """
+    mods_dir = _require_dir(req.path)
+    loader = req.loader or detect_loader(mods_dir)
+    game_version = req.version or _resolve_for(mods_dir, None)[0].profile
+    return rollback_mod(mods_dir, req.jar, loader, game_version)
 
 
 @app.post("/mods/install", response_model=InstallResult)

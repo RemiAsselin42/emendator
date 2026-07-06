@@ -58,6 +58,10 @@ class Mod(CamelModel):
     homepage: str | None = None
     latest_version: str | None = None
     update_available: bool | None = None
+    # In-pack mod ids this build declares incompatible on Modrinth (version
+    # dependencies with type "incompatible") — the authoritative known-incompat
+    # signal for conflict cards.
+    incompatible_with: list[str] = []
 
 
 class UntestableMod(CamelModel):
