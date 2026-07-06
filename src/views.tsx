@@ -10,6 +10,7 @@ import {
 } from "react";
 import { VirtualList } from "./components/VirtualList";
 import type {
+  AiFixResult,
   ApplyResult,
   ApplyTarget,
   BisectProgress,
@@ -33,6 +34,7 @@ import type {
   Severity,
 } from "./lib/api";
 import {
+  aiFix,
   applyMixinFixes,
   applyResolution,
   disableMod,
@@ -2254,7 +2256,21 @@ function PreciseMixinFixes({
   const [result, setResult] = useState<MixinApplyResult | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [verifyOutcome, setVerifyOutcome] = useState<MixinVerifyResult | null>(null);
+  const [aiRunning, setAiRunning] = useState(false);
+  const [aiResult, setAiResult] = useState<AiFixResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const fixWithAi = async () => {
+    setAiRunning(true);
+    setError(null);
+    try {
+      setAiResult(await aiFix(instanceRoot, version || undefined, baselineRunId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAiRunning(false);
+    }
+  };
 
   const verify = async () => {
     setVerifying(true);
@@ -2322,6 +2338,41 @@ function PreciseMixinFixes({
         >
           {planning ? "Planning…" : "Plan precise fixes"}
         </button>
+        <button
+          className="btn-secondary no-wrap"
+          type="button"
+          onClick={() => void fixWithAi()}
+          disabled={aiRunning || applying || verifying}
+          title="Let an AI model (your own Anthropic key, set in Settings) pick fixes from the ladder, apply them reversibly and verify with real boots. Long-running: each attempt boots the pack."
+        >
+          {aiRunning ? "AI fixing (boots)…" : "Fix with AI"}
+        </button>
+        {aiResult && (
+          <span className="note">
+            {aiResult.status === "fixed" && (
+              <span className="run-ok">AI fix verified — crash signature gone.</span>
+            )}
+            {aiResult.status === "not_fixed" && (
+              <span className="run-crash">AI could not fix it within its caps.</span>
+            )}
+            {aiResult.status === "stopped" && `AI stopped: ${aiResult.message ?? ""}`}
+            {aiResult.status === "error" && <span className="run-error">{aiResult.message}</span>}{" "}
+            {aiResult.iterations.length > 0 &&
+              `(${aiResult.iterations.map((i) => i.action).join(" → ")}; ${aiResult.inputTokens + aiResult.outputTokens} tokens)`}
+          </span>
+        )}
+        {aiResult?.manifest && (
+          <button
+            className="btn-secondary no-wrap"
+            type="button"
+            onClick={() =>
+              void revertMixinFixes(aiResult.manifest as string).then(() => setAiResult(null))
+            }
+            disabled={aiRunning}
+          >
+            Revert AI fixes
+          </button>
+        )}
         {plans !== null && actionable.length > 0 && !result && (
           <button
             className="btn-primary no-wrap"

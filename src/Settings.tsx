@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CurseForgeKeyForm } from "./CurseForgeKeyForm";
 import type { CurseForgeStatus } from "./lib/api";
+import { getAnthropicStatus, setAnthropicKey } from "./lib/api";
 
 // Always-available settings, reached from the gear in the top-right corner. Today
 // it manages the CurseForge API key (add / replace / remove); status is owned by
@@ -44,10 +45,81 @@ export function Settings({
               </p>
               <CurseForgeKeyForm status={status} onChanged={onChanged} allowRemove />
             </section>
+            <section className="settings-section">
+              <h3 className="settings-heading">Anthropic API key (AI fix)</h3>
+              <p className="modal-body">
+                Your own key from console.anthropic.com — enables the "Fix with AI" loop in the
+                mixin resolver. Requests go directly to Anthropic and each fix loop typically costs
+                well under a dollar; the key is stored locally on this machine.
+              </p>
+              <AnthropicKeyForm />
+            </section>
           </div>
         </div>
       )}
     </>
+  );
+}
+
+// Add / replace / remove the BYO Anthropic key; status is self-contained (the
+// key gates only the AI fix loop, nothing else in the app watches it).
+function AnthropicKeyForm() {
+  const [configured, setConfigured] = useState<boolean | null>(null);
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getAnthropicStatus()
+      .then((s) => setConfigured(s.configured))
+      .catch(() => setConfigured(null));
+  }, []);
+
+  const save = async (key: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const s = await setAnthropicKey(key);
+      setConfigured(s.configured);
+      setValue("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form
+      className="key-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (value.trim()) void save(value);
+      }}
+    >
+      <input
+        type="password"
+        className="key-input"
+        placeholder={configured ? "Configured — paste to replace" : "sk-ant-…"}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        disabled={busy}
+      />
+      <button type="submit" className="btn-primary no-wrap" disabled={busy || !value.trim()}>
+        {busy ? "Saving…" : "Save"}
+      </button>
+      {configured && (
+        <button
+          type="button"
+          className="btn-secondary no-wrap"
+          onClick={() => void save("")}
+          disabled={busy}
+        >
+          Remove
+        </button>
+      )}
+      {error && <span className="note run-error">{error}</span>}
+    </form>
   );
 }
 

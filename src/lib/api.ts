@@ -272,6 +272,54 @@ export function setCurseForgeKey(apiKey: string): Promise<CurseForgeStatus> {
   return postJson<CurseForgeStatus>("/config/curseforge", { apiKey });
 }
 
+// --- AI fix loop (BYO Anthropic key) ----------------------------------------
+
+export interface AnthropicStatus {
+  configured: boolean;
+}
+
+/** Whether a BYO Anthropic API key is configured (drives the Settings UI). */
+export async function getAnthropicStatus(): Promise<AnthropicStatus> {
+  const res = await fetch(`${BASE}/config/anthropic`);
+  if (!res.ok) throw await httpError(res);
+  return res.json() as Promise<AnthropicStatus>;
+}
+
+/** Save (or, with a blank string, clear) the user's Anthropic API key. */
+export function setAnthropicKey(apiKey: string): Promise<AnthropicStatus> {
+  return postJson<AnthropicStatus>("/config/anthropic", { apiKey });
+}
+
+export interface AiFixIteration {
+  action: string;
+  reasoning: string;
+  outcome: string;
+}
+
+export interface AiFixResult {
+  status: "fixed" | "not_fixed" | "stopped" | "error";
+  iterations: AiFixIteration[];
+  manifest: string | null; // revert handle of the last apply, if any
+  inputTokens: number;
+  outputTokens: number;
+  message: string | null;
+}
+
+/** Run the AI fix loop (very long-running: each iteration includes a real boot).
+ *  The model decides among the fix ladder's rungs; deterministic code applies;
+ *  everything is revertible via the returned manifest. */
+export function aiFix(
+  path: string,
+  version?: string,
+  baselineRunId?: string | null,
+): Promise<AiFixResult> {
+  return postJson<AiFixResult>("/ai/fix", {
+    path,
+    version,
+    baselineRunId: baselineRunId ?? undefined,
+  });
+}
+
 export type DisableStatus = "disabled" | "enabled" | "not_found" | "error";
 
 export interface DisableResult {
