@@ -560,6 +560,61 @@ def test_collect_mixin_targets_reads_manifest_mixinconfigs() -> None:
     assert result.methods == {"net.minecraft.server.MinecraftServer#tick"}
 
 
+def test_extract_applies_refmap_to_string_selectors() -> None:
+    pool = _Pool()
+    inject = _anno(
+        pool,
+        "Lorg/spongepowered/asm/mixin/injection/Inject;",
+        [("method", _ev_array([_ev_string(pool, "render")]))],
+    )
+    mixin = _mixin_anno(pool, value="net.minecraft.class_761")
+    refmap = {"render": "Lnet/minecraft/class_761;method_3251()V"}
+    result = extract_mixin_targets(_assemble(pool, [mixin], [("h", "()V", [inject])]), refmap)
+    # the dev name resolved to the runtime (intermediary) member, owner-scoped
+    assert result.methods == {"net.minecraft.class_761#method_3251"}
+    (injection,) = result.injections
+    assert injection.descriptor == "()V"
+
+
+def test_collect_mixin_targets_resolves_via_config_refmap() -> None:
+    pool = _Pool()
+    inject = _anno(
+        pool,
+        "Lorg/spongepowered/asm/mixin/injection/Inject;",
+        [("method", _ev_array([_ev_string(pool, "render")]))],
+    )
+    mixin = _mixin_anno(pool, value="net.minecraft.class_761")
+    class_bytes = _assemble(pool, [mixin], [("h", "()V", [inject])])
+
+    refmap = {
+        "data": {
+            "named:intermediary": {
+                "com/example/mixin/RenderMixin": {
+                    "render": "Lnet/minecraft/class_761;method_3251()V"
+                }
+            }
+        }
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr(
+            "mymod.mixins.json",
+            json.dumps(
+                {
+                    "package": "com.example.mixin",
+                    "refmap": "mymod-refmap.json",
+                    "mixins": ["RenderMixin"],
+                }
+            ),
+        )
+        zf.writestr("mymod-refmap.json", json.dumps(refmap))
+        zf.writestr("com/example/mixin/RenderMixin.class", class_bytes)
+    with zipfile.ZipFile(io.BytesIO(buffer.getvalue())) as zf:
+        result = _collect_mixin_targets(zf, zf.namelist())
+
+    assert result.methods == {"net.minecraft.class_761#method_3251"}
+
+
 def test_required_mods_surface_in_method_details() -> None:
     target = "net.minecraft.server.MinecraftServer"
     indexes = [

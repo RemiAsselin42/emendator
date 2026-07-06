@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Mixin selectors resolve through the jar's refmap.** String selectors in mixin annotations
+  (`method = …`, `targets = …`, `@At(target = …)`) are dev-named (Yarn/Mojmap) in most
+  distributed jars and only translated to runtime names at load via the config's refmap json.
+  The analyzer now reads that refmap and normalizes every selector to the runtime namespace
+  (Intermediary on Fabric/Quilt, Mojmap on modern (Neo)Forge), which also makes method-overlap
+  detection sound across mods built with different dev mappings; jars remapped statically by
+  newer toolchains (no refmap) already carry runtime names and pass through verbatim
+  (`app/analyzer/mods.py`, `app/analyzer/mixin_targets.py`).
+
 ## [0.2.0] — 2026-07-06
 
 ### Added

@@ -148,6 +148,41 @@ def _declared_mixin_configs(zf: zipfile.ZipFile, names: list[str]) -> set[str]:
     return {config for config in declared if config in present}
 
 
+def _read_refmap(zf: zipfile.ZipFile, name: Any) -> dict[str, dict[str, str]]:
+    """The config's refmap json: mixin class (internal name) -> dev selector -> runtime.
+
+    Distributed jars keep annotation *strings* dev-named (Yarn/Mojmap); Mixin
+    resolves them at runtime through this file. Reading it makes our extracted
+    method/target names runtime-correct — and comparable across mods built
+    against different dev mappings. Prefers the loader-specific slice under
+    ``data`` (e.g. ``named:intermediary``), falling back to ``mappings``.
+    """
+    if not isinstance(name, str) or not name:
+        return {}
+    try:
+        data = json.loads(zf.read(name), strict=False)
+    except (json.JSONDecodeError, KeyError, OSError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    mappings: Any = None
+    nested = data.get("data")
+    if isinstance(nested, dict):
+        for slice_ in nested.values():
+            if isinstance(slice_, dict) and slice_:
+                mappings = slice_
+                break
+    if mappings is None:
+        mappings = data.get("mappings")
+    if not isinstance(mappings, dict):
+        return {}
+    return {
+        cls: {k: v for k, v in entries.items() if isinstance(k, str) and isinstance(v, str)}
+        for cls, entries in mappings.items()
+        if isinstance(cls, str) and isinstance(entries, dict)
+    }
+
+
 def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> _JarMixins:
     """``@Mixin`` targets, ``Class#method`` pairs and patch info across the jar."""
     out = _JarMixins()
@@ -161,6 +196,7 @@ def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> _JarMixins:
         if not isinstance(config, dict) or not isinstance(config.get("package"), str):
             continue
         base = config["package"].replace(".", "/")
+        refmap = _read_refmap(zf, config.get("refmap"))
         config_priority = config.get("priority")
         default_priority = config_priority if isinstance(config_priority, int) else DEFAULT_PRIORITY
         required = config.get("required") is True
@@ -176,9 +212,11 @@ def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> _JarMixins:
             for class_name in mixin_classes:
                 if not isinstance(class_name, str):
                     continue
-                class_path = f"{base}/{class_name.replace('.', '/')}.class"
+                internal = f"{base}/{class_name.replace('.', '/')}"
                 try:
-                    targets = extract_mixin_targets(zf.read(class_path))
+                    targets = extract_mixin_targets(
+                        zf.read(f"{internal}.class"), refmap.get(internal)
+                    )
                 except KeyError:
                     continue
                 out.add(targets, default_priority, required)

@@ -237,8 +237,15 @@ def _flatten_at(value: Any) -> tuple[tuple[str, ...], tuple[str, ...]]:
     return tuple(values), tuple(targets)
 
 
-def _class_targets(annotations: list[_Annotation]) -> tuple[set[str], int | None]:
-    """``@Mixin`` target classes (dotted) and explicit priority, if any."""
+def _class_targets(
+    annotations: list[_Annotation], refmap: dict[str, str]
+) -> tuple[set[str], int | None]:
+    """``@Mixin`` target classes (dotted) and explicit priority, if any.
+
+    ``value = X.class`` constants were remapped to the runtime namespace when
+    the jar was built; ``targets = "..."`` strings stay dev-named and go
+    through the refmap here.
+    """
     classes: set[str] = set()
     priority: int | None = None
     for descriptor, elements in annotations:
@@ -250,7 +257,7 @@ def _class_targets(annotations: list[_Annotation]) -> tuple[set[str], int | None
                 classes.add(resolved)
         for target in _as_list(elements.get("targets")):
             if isinstance(target, str) and target:
-                classes.add(target.replace("/", "."))
+                classes.add(refmap.get(target, target).replace("/", "."))
         raw_priority = elements.get("priority")
         if isinstance(raw_priority, int):
             priority = raw_priority
@@ -258,7 +265,7 @@ def _class_targets(annotations: list[_Annotation]) -> tuple[set[str], int | None
 
 
 def _method_injections(
-    parsed_methods: list[tuple[str, str, list[_Annotation]]],
+    parsed_methods: list[tuple[str, str, list[_Annotation]]], refmap: dict[str, str]
 ) -> list[MixinInjection]:
     injections: list[MixinInjection] = []
     for method_name, method_descriptor, annotations in parsed_methods:
@@ -278,10 +285,13 @@ def _method_injections(
             if kind is None:
                 continue
             at_values, at_targets = _flatten_at(elements.get("at"))
+            at_targets = tuple(refmap.get(target, target) for target in at_targets)
             for selector in _as_list(elements.get("method")):
                 if not isinstance(selector, str) or not selector:
                     continue
-                owner, name, explicit_descriptor = _split_selector(selector)
+                # String selectors are dev-named in distributed jars; the
+                # refmap (when the config ships one) yields the runtime name.
+                owner, name, explicit_descriptor = _split_selector(refmap.get(selector, selector))
                 # A lone ``*`` matches every method: class-level info only, a
                 # method key would be noise. Prefix wildcards (``tick*``) are
                 # kept verbatim — they can't be expanded statically.
@@ -321,12 +331,16 @@ def _method_injections(
     return injections
 
 
-def extract_mixin_targets(class_bytes: bytes) -> MixinTargets:
+def extract_mixin_targets(class_bytes: bytes, refmap: dict[str, str] | None = None) -> MixinTargets:
     """Class targets, ``Class#method`` pairs and injection records from bytecode.
 
     Selectors with an explicit owner (``Lnet/x/Y;tick()V``) attribute to that
     owner only; bare selectors attribute to every ``@Mixin`` target class (the
     unavoidable static over-approximation for multi-target mixins).
+
+    ``refmap`` is this mixin class's slice of the jar's refmap json (dev-named
+    selector -> runtime member/class). Without it, string selectors stay
+    dev-named — fine for same-mapping comparisons, wrong across mappings.
 
     Best-effort: returns empty results for non-mixin classes or parse failures.
     """
@@ -335,8 +349,8 @@ def extract_mixin_targets(class_bytes: bytes) -> MixinTargets:
     except (ValueError, IndexError, struct.error):
         return MixinTargets()
 
-    classes, priority = _class_targets(parsed.class_annotations)
-    injections = _method_injections(parsed.method_annotations)
+    classes, priority = _class_targets(parsed.class_annotations, refmap or {})
+    injections = _method_injections(parsed.method_annotations, refmap or {})
 
     methods: set[str] = set()
     for injection in injections:
