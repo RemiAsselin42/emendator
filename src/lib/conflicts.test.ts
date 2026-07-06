@@ -36,6 +36,7 @@ function mkMod(partial: Partial<Mod> & { id: string }): Mod {
     homepage: null,
     latestVersion: null,
     updateAvailable: null,
+    incompatibleWith: [],
     ...partial,
   };
 }
@@ -46,7 +47,10 @@ const verdict: RunVerdict = {
   durationMs: 1,
   cause: null,
   mixinExports: ["net.minecraft.class_310"],
+  mixinApplications: [],
   logTail: null,
+  crashReport: null,
+  runId: null,
 };
 
 describe("conflicts helpers", () => {

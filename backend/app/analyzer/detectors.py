@@ -52,12 +52,31 @@ class MixinMethodPatch:
     # ``injectors.defaultRequire``): a failed application then crashes the boot
     # instead of logging and limping on.
     required: bool = False
+    # Dotted FQ names of the mixin classes doing the patching — the handle a
+    # precise fix needs (toggle key lookup, filter-config generation).
+    mixin_classes: set[str] = field(default_factory=set)
 
     def merge(self, other: "MixinMethodPatch") -> None:
         self.kinds |= other.kinds
         self.exclusive_at |= other.exclusive_at
         self.priorities |= other.priorities
         self.required = self.required or other.required
+        self.mixin_classes |= other.mixin_classes
+
+
+@dataclass
+class MixinToggleSystem:
+    """A mod's own per-mixin kill switch (CaffeineMC-style properties / Debugify).
+
+    The officially tolerated no-code compat path: a config file the mod itself
+    reads to skip applying individual mixins. ``keys`` maps each togglable
+    mixin class (dotted FQ) to its option key — ``mixin.<subpackage>`` for the
+    CaffeineMC family (per-package granularity), ``MC-<bug id>`` for Debugify.
+    """
+
+    kind: str  # "properties" | "debugify"
+    file: str  # instance-relative config path, e.g. "config/lithium.properties"
+    keys: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -74,6 +93,8 @@ class JarIndex:
     mixin_method_targets: set[str] = field(default_factory=set)
     # "<target class>#<method>" -> how this jar's mixins patch it.
     mixin_method_patches: dict[str, MixinMethodPatch] = field(default_factory=dict)
+    # The mod's own per-mixin kill-switch config, when it ships one.
+    mixin_toggles: MixinToggleSystem | None = None
     # Mod ids (and their `provides`) shipped as nested jars inside this jar.
     bundled_ids: set[str] = field(default_factory=set)
 
@@ -310,6 +331,14 @@ def _shared_method_details(
         entry: dict[str, Any] = {
             "kinds": {mod: sorted(patch.kinds) for mod, patch in sorted(by_mod.items())}
         }
+        mixin_classes = {
+            mod: sorted(patch.mixin_classes)
+            for mod, patch in sorted(by_mod.items())
+            if patch.mixin_classes
+        }
+        if mixin_classes:
+            # The concrete handle a precise fix targets (toggle/filter configs).
+            entry["mixinClasses"] = mixin_classes
         # Fatal-vs-silent signal: a failed application only crashes the boot
         # for mods whose config is `required`; the others break silently.
         required_by = sorted(mod for mod, patch in by_mod.items() if patch.required)

@@ -76,6 +76,52 @@ def update_mod(mods_dir: Path, jar: str, loader: Loader, game_version: str) -> U
     )
 
 
+def rollback_mod(mods_dir: Path, jar: str, loader: Loader, game_version: str) -> UpdateResult:
+    """Swap ``jar`` for the Modrinth version released just before it, in place.
+
+    The "downgrade to known-good" lever: when the current build introduced the
+    conflict, one release back is the cheapest safe move. Same atomic
+    ``.part`` + sha1-verified flow as :func:`update_mod`.
+    """
+    old = mods_dir / jar
+    if not old.is_file():
+        return UpdateResult(status="error", old_jar=jar, message=f"Jar not found: {jar}")
+
+    info = modrinth.find_previous(old, loader, game_version)
+    if info is None:
+        return UpdateResult(
+            status="not_found",
+            old_jar=jar,
+            message="No older compatible Modrinth version for this jar.",
+        )
+
+    tmp = _download(info["url"], mods_dir)
+    if tmp is None:
+        return UpdateResult(status="error", old_jar=jar, message="Download failed.")
+
+    expected = info.get("sha1")
+    if expected and _sha1_file(tmp) != expected:
+        tmp.unlink(missing_ok=True)
+        return UpdateResult(status="error", old_jar=jar, message="Checksum mismatch — aborted.")
+
+    new_name = info["filename"]
+    try:
+        tmp.replace(mods_dir / new_name)
+        if new_name != jar:
+            old.unlink(missing_ok=True)
+    except OSError as exc:
+        tmp.unlink(missing_ok=True)
+        return UpdateResult(status="error", old_jar=jar, message=f"Could not roll back: {exc}")
+
+    return UpdateResult(
+        status="updated",
+        old_jar=jar,
+        new_jar=new_name,
+        version=info.get("version_number"),
+        message="Rolled back one release.",
+    )
+
+
 def install_mod(mods_dir: Path, mod_id: str, loader: Loader, game_version: str) -> InstallResult:
     """Add the missing dependency ``mod_id`` to ``mods_dir`` from Modrinth (else CurseForge).
 

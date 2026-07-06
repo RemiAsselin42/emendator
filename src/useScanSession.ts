@@ -295,7 +295,10 @@ function useRunner(version: string | null, modsPath: string | null): Runner {
             excerpt: null,
           },
           mixinExports: [],
+          mixinApplications: [],
           logTail: null,
+          crashReport: null,
+          runId: null,
         });
       } finally {
         setTesting(false);

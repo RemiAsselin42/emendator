@@ -14,7 +14,7 @@ from app.analyzer.registry_index import build_registry_index
 from app.config import settings
 from app.credentials import load_into_settings, set_curseforge_key
 from app.enrich import curseforge, enrich_mods
-from app.enrich.install import disable_mod, enable_mod, install_mod, update_mod
+from app.enrich.install import disable_mod, enable_mod, install_mod, rollback_mod, update_mod
 from app.models import (
     ApplyRequest,
     ApplyResult,
@@ -29,6 +29,14 @@ from app.models import (
     InstallResult,
     Instance,
     InstanceReport,
+    JarPatchRequest,
+    JarPatchResult,
+    MixinApplyRequest,
+    MixinApplyResult,
+    MixinPlanRequest,
+    MixinPlanResult,
+    MixinVerifyRequest,
+    MixinVerifyResult,
     ResolutionPlan,
     ResolutionTargets,
     ResolutionVariants,
@@ -54,6 +62,13 @@ from app.profile import (
 )
 from app.resolve.apply import apply_resolution, resolution_targets, revert_resolution
 from app.resolve.generate import build_resolution_plan, export_plan
+from app.resolve.jar_patch import patch_jar_mixin_config, unpatch_jar
+from app.resolve.mixins import (
+    apply_mixin_fixes,
+    plan_mixin_fixes,
+    revert_mixin_fixes,
+    verify_mixin_fixes,
+)
 from app.resolve.variants import collect_recipe_variants, recipe_winner_bodies
 from app.runner.artifacts import list_runs, read_run_text, read_run_verdict
 from app.runner.bisect import BisectProgress, bisect_set
@@ -61,7 +76,7 @@ from app.runner.runner import detect_loader, is_docker_available, run_set
 from app.sources.discovery import discover_instances
 from app.sources.instance import detect_instance, mods_jars
 
-app = FastAPI(title="Emendator backend", version="0.2.0")
+app = FastAPI(title="Emendator backend", version="0.3.0")
 
 # Fold a UI-stored CurseForge key (if any) into live settings before serving, so
 # the install fallback is armed without a restart. Env-provided keys still win.
@@ -314,6 +329,101 @@ def mods_update(req: UpdateRequest) -> UpdateResult:
     loader = req.loader or detect_loader(mods_dir)
     game_version = req.version or _resolve_for(mods_dir, None)[0].profile
     return update_mod(mods_dir, req.jar, loader, game_version)
+
+
+@app.post("/resolve/mixins", response_model=MixinPlanResult)
+def resolve_mixins(req: MixinPlanRequest) -> MixinPlanResult:
+    """Plan the mixin fix ladder for the instance's actionable overlaps.
+
+    Per conflict: the loser pick (overridable via ``losers``) and the cheapest
+    viable rung — the mod's own toggle, a filter-mod config, else disable —
+    with rollback / jar-patch listed as manual alternatives.
+    """
+    root = _require_dir(req.path)
+    profile, _ = _resolve_for_jars(mods_jars(detect_instance(root)), req.version)
+    return plan_mixin_fixes(root, profile, req.losers)
+
+
+@app.post("/resolve/mixins/apply", response_model=MixinApplyResult)
+def resolve_mixins_apply(req: MixinApplyRequest) -> MixinApplyResult:
+    """Execute the planned mixin fixes, reversibly.
+
+    Generated config files are merged into any existing user file (prior
+    content is captured), the filter mod is installed when needed, disables
+    use the ``.disabled`` rename — all recorded in a manifest for revert.
+    """
+    root = _require_dir(req.path)
+    profile, _ = _resolve_for_jars(mods_jars(detect_instance(root)), req.version)
+    return apply_mixin_fixes(
+        root,
+        profile,
+        losers=req.losers,
+        targets=req.targets,
+        allow_disable=req.allow_disable,
+    )
+
+
+@app.post("/resolve/mixins/revert", response_model=MixinApplyResult)
+def resolve_mixins_revert(req: RevertRequest) -> MixinApplyResult:
+    """Undo a prior mixin apply by its manifest (restore files, re-enable jars)."""
+    return revert_mixin_fixes(Path(req.manifest))
+
+
+@app.post("/resolve/mixins/verify", response_model=MixinVerifyResult)
+def resolve_mixins_verify(req: MixinVerifyRequest) -> MixinVerifyResult:
+    """Re-boot the set and diff against the pre-fix baseline run (§2.6).
+
+    Long-running: a real boot. ``fixed`` = the baseline crash signature is
+    gone; ``exportsRemoved`` = classes no longer transformed by the loader.
+    Client-section mixins are never exercised by a server boot — the response
+    note says so.
+    """
+    root = _require_dir(req.path)
+    profile, _ = _resolve_for_jars(mods_jars(detect_instance(root)), req.version)
+    return verify_mixin_fixes(root, profile, req.baseline_run_id)
+
+
+@app.post("/mods/patch", response_model=JarPatchResult)
+def mods_patch(req: JarPatchRequest) -> JarPatchResult:
+    """Edit a jar's mixin config in place (last-resort fix, explicit consent).
+
+    Removes mixin entries / flips ``required`` / adjusts ``priority`` and
+    re-zips; the original jar is kept as ``.bak``. Refused without
+    ``confirm: true`` — the UI must surface the caveats first (licensing,
+    pack-manifest hash drift, voided upstream support).
+    """
+    if not req.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Jar patching requires confirm: true after showing the caveats.",
+        )
+    return patch_jar_mixin_config(
+        _require_dir(req.path),
+        req.jar,
+        remove_mixins=req.remove_mixins,
+        set_required=req.set_required,
+        set_priority=req.set_priority,
+    )
+
+
+@app.post("/mods/unpatch", response_model=JarPatchResult)
+def mods_unpatch(req: JarPatchRequest) -> JarPatchResult:
+    """Restore a patched jar from its ``.bak`` (the revert path)."""
+    return unpatch_jar(_require_dir(req.path), req.jar)
+
+
+@app.post("/mods/rollback", response_model=UpdateResult)
+def mods_rollback(req: UpdateRequest) -> UpdateResult:
+    """Roll one jar back to the Modrinth version released just before it.
+
+    Explicit user action from the mixin resolver: when the current build
+    introduced a conflict, one release back is the cheapest safe move. Same
+    verified, atomic swap as ``/mods/update``; no-op on any failure.
+    """
+    mods_dir = _require_dir(req.path)
+    loader = req.loader or detect_loader(mods_dir)
+    game_version = req.version or _resolve_for(mods_dir, None)[0].profile
+    return rollback_mod(mods_dir, req.jar, loader, game_version)
 
 
 @app.post("/mods/install", response_model=InstallResult)

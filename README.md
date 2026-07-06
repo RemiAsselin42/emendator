@@ -112,9 +112,15 @@ end-to-end, but interfaces and behaviour may still change before a stable releas
   classification, with a copyable, severity-coloured crash-log view.
 - **Bisection** : binary search down to the guilty subset in ~log₂(N) boots.
 - **Resolution hub** : per-conflict winner selection for recipes and tags, with one-click
-  apply into the live instance and manifest-based undo; a mixin resolver offering
-  version-match or a per-jar disable (a `.disabled` rename, restored in one click — not yet
-  covered by the apply manifest).
+  apply into the live instance and manifest-based undo; and a **precise mixin fix ladder** —
+  per conflict, the least destructive lever that works: the mod's own per-mixin toggle
+  (Sodium/Lithium-style, Debugify), a filter-mod config (Mixin Blacklist / Mixin Helper,
+  installed on demand), version rollback, a consent-gated jar patch, or — only as the
+  fallback — a jar disable. Applies merge with existing user configs, everything (files,
+  disables, installed filter jars) is recorded in a manifest and reverted in one click, and
+  a **verify boot** confirms the previous crash signature is gone. Caveat: a headless server
+  boot never exercises `client`-section mixins — client-side fixes still need an in-game
+  check.
 - **Beyond mods** : resource-pack / datapack inventory, override detection, approximate
   item/block index.
 - **Online enrichment** : Modrinth hash lookup + update check, CurseForge links; one-click

@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-06
+
+### Added
+
+- **Mod-own mixin toggles detected and generated.** Jars shipping their own per-mixin kill
+  switch are recognized from bytecode alone: CaffeineMC-style systems (Sodium/Lithium/
+  ModernFix and clones) via the properties path baked into their mixin-config plugin class,
+  and Debugify via its bug-id package convention. The scan records which mixin classes are
+  togglable and through which key (`JarIndex.mixin_toggles`), conflicts list the concrete
+  mixin classes per mod (`methodDetails.mixinClasses`), and a generator emits the minimal
+  override file (`mixin.<package>=false` lines / `{"MC-xxxxx": false}`) that disables only
+  the conflicting mixins — the lowest-risk rung of the fix ladder
+  (`app/analyzer/mods.py`, `app/resolve/mixin_toggles.py`).
+- **Filter-mod config generation.** When no mod-own toggle covers a conflicting mixin, the
+  next rung generates the config of an installable filter mod that cancels it at load time:
+  Mixin Blacklist on Fabric/Quilt (`config/mixinblacklist.json`) or Mixin Helper on
+  (Neo)Forge 1.20.1/1.21.1 (`config/mixinhelper.json`), blacklisting by mixin class name —
+  the one identifier that needs no mapping work. Both slugs install via the existing
+  `/mods/install` flow (`app/resolve/mixin_filters.py`).
+- **Version rollback + known-incompatibility signal.** `POST /mods/rollback` swaps a jar for
+  the Modrinth version released just before it (same verified atomic flow as update) — the
+  "downgrade to known-good" lever when the current build introduced a conflict. Enrichment
+  now also reads each version's Modrinth dependency metadata and resolves `incompatible`
+  declarations against the pack: `Mod.incompatibleWith` lists the in-pack mods a build is
+  formally incompatible with (`app/enrich/modrinth.py`, `app/enrich/install.py`).
+- **Mixin fix ladder: plan → apply → revert.** `POST /resolve/mixins` plans, per actionable
+  overlap, the loser and the cheapest viable rung — the mod's own toggle, a filter-mod config
+  (installing the filter mod when absent), else disable — with rollback and jar-patch offered
+  as manual alternatives, and a human hint of what each fix trades away. Apply merges
+  generated configs into existing user files (prior content is captured), sidelines jars via
+  `.disabled`, and records everything in a manifest that `POST /resolve/mixins/revert`
+  restores — including previously-user-owned file content and installed filter jars. The
+  Mixins sub-tab gains a "Plan precise fixes" panel driving the whole flow
+  (`app/resolve/mixins.py`, `views.tsx`).
+- **Fix verification by boot diff.** `POST /resolve/mixins/verify` re-boots the set and diffs
+  it against the persisted pre-fix baseline run: `fixed` says whether the previous crash
+  signature is gone, `exportsRemoved` lists the classes the loader no longer transforms —
+  ground truth that the targeted mixins were switched off. The UI offers it right after an
+  apply; the response always states the limit that client-section mixins are never exercised
+  by a server boot (`app/resolve/mixins.py`, `views.tsx`).
+- **Jar mixin-config patching (last resort, gated).** `POST /mods/patch` removes mixin
+  entries, flips `required` or adjusts `priority` inside a jar's mixin config and re-zips it
+  — perfectly precise, but it edits a file the user doesn't own, so the endpoint refuses to
+  act without `confirm: true` and the original jar is kept as `.bak` (`POST /mods/unpatch`
+  restores it). Loaders perform no jar integrity checks, so the patched jar loads normally
+  (`app/resolve/jar_patch.py`).
+
+### Changed
+
+- **Mixin selectors resolve through the jar's refmap.** String selectors in mixin annotations
+  (`method = …`, `targets = …`, `@At(target = …)`) are dev-named (Yarn/Mojmap) in most
+  distributed jars and only translated to runtime names at load via the config's refmap json.
+  The analyzer now reads that refmap and normalizes every selector to the runtime namespace
+  (Intermediary on Fabric/Quilt, Mojmap on modern (Neo)Forge), which also makes method-overlap
+  detection sound across mods built with different dev mappings; jars remapped statically by
+  newer toolchains (no refmap) already carry runtime names and pass through verbatim
+  (`app/analyzer/mods.py`, `app/analyzer/mixin_targets.py`).
+
 ## [0.2.0] — 2026-07-06
 
 ### Added
@@ -158,7 +216,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   datapacks, with preview and export from the UI.
 - **CI.** Windows installer build and draft release on tag.
 
-[Unreleased]: https://github.com/RemiAsselin42/emendator/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/RemiAsselin42/emendator/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/RemiAsselin42/emendator/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/RemiAsselin42/emendator/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/RemiAsselin42/emendator/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/RemiAsselin42/emendator/compare/v0.1.0...v0.1.1
