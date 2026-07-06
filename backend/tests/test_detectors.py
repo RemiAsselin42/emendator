@@ -448,6 +448,40 @@ def test_extract_mixin_targets_ignores_garbage() -> None:
     assert result.injections == []
 
 
+def test_extract_desc_selector_owner_scoped() -> None:
+    pool = _Pool()
+    desc = _anno(
+        pool,
+        "Lorg/spongepowered/asm/mixin/injection/Desc;",
+        [("owner", _ev_class(pool, "net.other.Target")), ("value", _ev_string(pool, "tick"))],
+    )
+    inject = _anno(
+        pool,
+        "Lorg/spongepowered/asm/mixin/injection/Inject;",
+        [("target", _ev_array([_ev_anno(desc)]))],
+    )
+    mixin = _mixin_anno(pool, value="net.a.A")
+    result = extract_mixin_targets(_assemble(pool, [mixin], [("h", "()V", [inject])]))
+    assert result.methods == {"net.other.Target#tick"}
+    (injection,) = result.injections
+    assert injection.kind == "inject"
+    assert injection.owner == "net.other.Target"
+
+
+def test_extract_match_all_wildcard_selector_is_skipped() -> None:
+    pool = _Pool()
+    inject = _anno(
+        pool,
+        "Lorg/spongepowered/asm/mixin/injection/Inject;",
+        [("method", _ev_array([_ev_string(pool, "*")]))],
+    )
+    mixin = _mixin_anno(pool, value="net.a.A")
+    result = extract_mixin_targets(_assemble(pool, [mixin], [("h", "()V", [inject])]))
+    assert result.classes == {"net.a.A"}  # class-level info stays
+    assert result.methods == set()  # no meaningless "*" method key
+    assert result.injections == []
+
+
 def test_collect_mixin_targets_builds_patches_with_config_priority() -> None:
     pool = _Pool()
     overwrite = _anno(pool, "Lorg/spongepowered/asm/mixin/Overwrite;", [])
@@ -471,3 +505,66 @@ def test_collect_mixin_targets_builds_patches_with_config_priority() -> None:
     patch = result.patches[key]
     assert patch.kinds == {"overwrite"}
     assert patch.priorities == {1200}  # config-level priority, no @Mixin override
+    assert patch.required is False
+
+
+def test_collect_mixin_targets_discovers_declared_configs_and_required() -> None:
+    pool = _Pool()
+    overwrite = _anno(pool, "Lorg/spongepowered/asm/mixin/Overwrite;", [])
+    mixin = _mixin_anno(pool, value="net.minecraft.server.MinecraftServer")
+    class_bytes = _assemble(pool, [mixin], [("tick", "()V", [overwrite])])
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        # config declared in fabric.mod.json but NOT matching *.mixins.json
+        zf.writestr("fabric.mod.json", json.dumps({"id": "m", "mixins": ["custom-config.json"]}))
+        zf.writestr(
+            "custom-config.json",
+            json.dumps(
+                {"package": "com.example.mixin", "required": True, "mixins": ["ServerMixin"]}
+            ),
+        )
+        zf.writestr("com/example/mixin/ServerMixin.class", class_bytes)
+    with zipfile.ZipFile(io.BytesIO(buffer.getvalue())) as zf:
+        result = _collect_mixin_targets(zf, zf.namelist())
+
+    patch = result.patches["net.minecraft.server.MinecraftServer#tick"]
+    assert patch.kinds == {"overwrite"}
+    assert patch.required is True
+
+
+def test_collect_mixin_targets_reads_manifest_mixinconfigs() -> None:
+    pool = _Pool()
+    inject = _anno(
+        pool,
+        "Lorg/spongepowered/asm/mixin/injection/Inject;",
+        [("method", _ev_array([_ev_string(pool, "tick")]))],
+    )
+    mixin = _mixin_anno(pool, value="net.minecraft.server.MinecraftServer")
+    class_bytes = _assemble(pool, [mixin], [("h", "()V", [inject])])
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr(
+            "META-INF/MANIFEST.MF",
+            "Manifest-Version: 1.0\r\nMixinConfigs: forgemod.custom.json\r\n",
+        )
+        zf.writestr(
+            "forgemod.custom.json",
+            json.dumps({"package": "com.example.mixin", "mixins": ["ServerMixin"]}),
+        )
+        zf.writestr("com/example/mixin/ServerMixin.class", class_bytes)
+    with zipfile.ZipFile(io.BytesIO(buffer.getvalue())) as zf:
+        result = _collect_mixin_targets(zf, zf.namelist())
+
+    assert result.methods == {"net.minecraft.server.MinecraftServer#tick"}
+
+
+def test_required_mods_surface_in_method_details() -> None:
+    target = "net.minecraft.server.MinecraftServer"
+    indexes = [
+        _mixin_index("a", target, "tick", MixinMethodPatch(kinds={"overwrite"}, required=True)),
+        _mixin_index("b", target, "tick", MixinMethodPatch(kinds={"overwrite"})),
+    ]
+    conflicts = detect_mixin_overlaps(indexes)
+    assert conflicts[0].detail["methodDetails"]["tick"]["requiredBy"] == ["a"]

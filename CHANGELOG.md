@@ -24,11 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Mixin overlaps are graded by patch mechanics.** The analyzer now reads each mixin's bytecode
   in full — `@Overwrite`, MixinExtras injectors (`@WrapOperation`, `@ModifyReturnValue`, …),
-  injection points (`@At`), priorities (annotation- and config-level), owner-scoped selectors —
-  and escalates a `mixin_overlap` to `error` when the combination provably cannot coexist: two
-  `@Overwrite` of the same method at a colliding priority, or two instruction-exclusive injectors
-  (`@Redirect`/`@ModifyConstant`) on the same call site. The per-method reasoning ships in the
-  conflict's additive `methodDetails` payload (`app/analyzer/mixin_targets.py`,
+  injection points (`@At`), `@Desc`-style selectors, priorities (annotation- and config-level),
+  owner-scoped selectors — and escalates a `mixin_overlap` to `error` when the combination
+  provably cannot coexist: two `@Overwrite` of the same method at a colliding priority, or two
+  instruction-exclusive injectors (`@Redirect`/`@ModifyConstant`) on the same call site. Mixin
+  configs are discovered from loader metadata (Fabric `mixins`, Quilt `mixin`, Forge
+  `MixinConfigs` manifest attribute) as well as the `*.mixins.json` convention, and each config's
+  `required` flag feeds a fatal-vs-silent `requiredBy` signal. The per-method reasoning ships in
+  the conflict's additive `methodDetails` payload (`app/analyzer/mixin_targets.py`,
   `app/analyzer/detectors.py`, `app/analyzer/mods.py`).
 - **Install fallback skips platform pseudo-dependencies.** A missing "dependency" that is really
   the game, Java or the loader is now reported as *not an installable mod* rather than a failed

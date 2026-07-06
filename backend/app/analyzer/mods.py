@@ -7,8 +7,9 @@ hardcoded) are read into a :class:`JarIndex`. Detection then runs purely in
 memory.
 
 Jars without recognized loader metadata, or that fail to parse, are non-fatal:
-they are collected as :class:`ScanError`. Only top-level jars are scanned (nested
-``META-INF/jars`` deferred).
+they are collected as :class:`ScanError`. Nested jars (jars-in-jars) contribute
+their mod ids and mixins; nested recipes/tags are intentionally excluded (see
+:func:`_collect_nested`).
 """
 
 import hashlib
@@ -21,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from app.analyzer.detectors import JarIndex, MixinMethodPatch, detect_conflicts
-from app.analyzer.metadata import FABRIC_METADATA, parse_mod_metadata
+from app.analyzer.metadata import FABRIC_METADATA, QUILT_METADATA, parse_mod_metadata
 from app.analyzer.mixin_targets import (
     DEFAULT_PRIORITY,
     INSTRUCTION_EXCLUSIVE_KINDS,
@@ -84,8 +85,8 @@ class _JarMixins:
         for key, patch in other.patches.items():
             self.patches.setdefault(key, MixinMethodPatch()).merge(patch)
 
-    def add(self, targets: MixinTargets, priority: int) -> None:
-        """Fold one mixin class's extraction in; ``priority`` is the config default."""
+    def add(self, targets: MixinTargets, priority: int, required: bool = False) -> None:
+        """Fold one mixin class's extraction in; ``priority``/``required`` are config defaults."""
         self.classes |= targets.classes
         self.methods |= targets.methods
         effective = targets.priority if targets.priority is not None else priority
@@ -95,16 +96,64 @@ class _JarMixins:
                 patch = self.patches.setdefault(f"{owner}#{injection.method}", MixinMethodPatch())
                 patch.kinds.add(injection.kind)
                 patch.priorities.add(effective)
+                patch.required = patch.required or required
                 if injection.kind in INSTRUCTION_EXCLUSIVE_KINDS:
                     patch.exclusive_at.update(injection.at_targets)
+
+
+def _declared_mixin_configs(zf: zipfile.ZipFile, names: list[str]) -> set[str]:
+    """Mixin config paths declared in loader metadata, whatever their file name.
+
+    The suffix glob (``*.mixins.json``) catches the convention; this catches the
+    rest: Fabric's ``"mixins"`` array (strings or ``{"config": ...}`` objects),
+    Quilt's ``"mixin"`` (string or list), and the Forge/NeoForge
+    ``MixinConfigs`` manifest attribute (comma-separated).
+    """
+    declared: set[str] = set()
+    present = set(names)
+
+    def _entries(value: Any) -> list[str]:
+        out: list[str] = []
+        for entry in value if isinstance(value, list) else [value]:
+            if isinstance(entry, str) and entry:
+                out.append(entry)
+            elif isinstance(entry, dict) and isinstance(entry.get("config"), str):
+                out.append(entry["config"])
+        return out
+
+    for metadata_name, key in ((FABRIC_METADATA, "mixins"), (QUILT_METADATA, "mixin")):
+        if metadata_name not in present:
+            continue
+        try:
+            data = json.loads(zf.read(metadata_name), strict=False)
+        except (json.JSONDecodeError, KeyError, OSError):
+            continue
+        if isinstance(data, dict):
+            declared.update(_entries(data.get(key)))
+
+    manifest_name = "META-INF/MANIFEST.MF"
+    if manifest_name in present:
+        try:
+            manifest = zf.read(manifest_name).decode("utf-8", "replace")
+        except (KeyError, OSError):
+            manifest = ""
+        # Manifest values wrap at 72 bytes with a leading-space continuation.
+        manifest = manifest.replace("\r\n", "\n").replace("\n ", "")
+        for line in manifest.splitlines():
+            if line.lower().startswith("mixinconfigs:"):
+                declared.update(
+                    part.strip() for part in line.split(":", 1)[1].split(",") if part.strip()
+                )
+
+    return {config for config in declared if config in present}
 
 
 def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> _JarMixins:
     """``@Mixin`` targets, ``Class#method`` pairs and patch info across the jar."""
     out = _JarMixins()
-    for name in names:
-        if not name.endswith(".mixins.json"):
-            continue
+    candidates = {name for name in names if name.endswith(".mixins.json")}
+    candidates |= _declared_mixin_configs(zf, names)
+    for name in sorted(candidates):
         try:
             config = json.loads(zf.read(name), strict=False)
         except (json.JSONDecodeError, KeyError, OSError):
@@ -114,6 +163,12 @@ def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> _JarMixins:
         base = config["package"].replace(".", "/")
         config_priority = config.get("priority")
         default_priority = config_priority if isinstance(config_priority, int) else DEFAULT_PRIORITY
+        required = config.get("required") is True
+        injectors = config.get("injectors")
+        if isinstance(injectors, dict):
+            default_require = injectors.get("defaultRequire")
+            if isinstance(default_require, int) and default_require >= 1:
+                required = True
         for section in _MIXIN_SECTIONS:
             mixin_classes = config.get(section)
             if not isinstance(mixin_classes, list):
@@ -126,7 +181,7 @@ def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> _JarMixins:
                     targets = extract_mixin_targets(zf.read(class_path))
                 except KeyError:
                     continue
-                out.add(targets, default_priority)
+                out.add(targets, default_priority, required)
     return out
 
 

@@ -27,6 +27,7 @@ from typing import Any
 _MAGIC = 0xCAFEBABE
 _MIXIN_DESCRIPTOR = "Lorg/spongepowered/asm/mixin/Mixin;"
 _OVERWRITE_DESCRIPTOR = "Lorg/spongepowered/asm/mixin/Overwrite;"
+_DESC_DESCRIPTOR = "Lorg/spongepowered/asm/mixin/injection/Desc;"
 # Injector annotations whose ``method`` element names the patched target
 # methods, mapped to a stable kind. Vanilla Mixin plus MixinExtras — bundled by
 # every modern loader, so its injectors are just as conflict-relevant.
@@ -281,13 +282,37 @@ def _method_injections(
                 if not isinstance(selector, str) or not selector:
                     continue
                 owner, name, explicit_descriptor = _split_selector(selector)
-                if not name:
+                # A lone ``*`` matches every method: class-level info only, a
+                # method key would be noise. Prefix wildcards (``tick*``) are
+                # kept verbatim — they can't be expanded statically.
+                if not name or name == "*":
                     continue
                 injections.append(
                     MixinInjection(
                         kind=kind,
                         method=name,
                         descriptor=explicit_descriptor,
+                        owner=owner,
+                        at=at_values,
+                        at_targets=at_targets,
+                    )
+                )
+            # ``target = @Desc(owner = X.class, value = "name")`` selectors.
+            for desc in _as_list(elements.get("target")):
+                if not (isinstance(desc, tuple) and len(desc) == 2):
+                    continue
+                desc_descriptor, desc_elements = desc
+                if desc_descriptor != _DESC_DESCRIPTOR:
+                    continue
+                name = desc_elements.get("value")
+                if not isinstance(name, str) or not name:
+                    continue
+                raw_owner = desc_elements.get("owner")
+                owner = _descriptor_to_class(raw_owner) if isinstance(raw_owner, str) else None
+                injections.append(
+                    MixinInjection(
+                        kind=kind,
+                        method=name,
                         owner=owner,
                         at=at_values,
                         at_targets=at_targets,

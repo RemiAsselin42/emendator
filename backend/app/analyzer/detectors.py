@@ -48,11 +48,16 @@ class MixinMethodPatch:
     # Effective priorities (@Mixin priority, else config priority, else 1000)
     # of the mixin classes patching this method.
     priorities: set[int] = field(default_factory=set)
+    # True when a contributing config declares ``required`` (or a positive
+    # ``injectors.defaultRequire``): a failed application then crashes the boot
+    # instead of logging and limping on.
+    required: bool = False
 
     def merge(self, other: "MixinMethodPatch") -> None:
         self.kinds |= other.kinds
         self.exclusive_at |= other.exclusive_at
         self.priorities |= other.priorities
+        self.required = self.required or other.required
 
 
 @dataclass
@@ -305,6 +310,11 @@ def _shared_method_details(
         entry: dict[str, Any] = {
             "kinds": {mod: sorted(patch.kinds) for mod, patch in sorted(by_mod.items())}
         }
+        # Fatal-vs-silent signal: a failed application only crashes the boot
+        # for mods whose config is `required`; the others break silently.
+        required_by = sorted(mod for mod, patch in by_mod.items() if patch.required)
+        if required_by:
+            entry["requiredBy"] = required_by
 
         overwriters = sorted(mod for mod, patch in by_mod.items() if "overwrite" in patch.kinds)
         if len(overwriters) >= 2:
