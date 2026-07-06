@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mod-own mixin toggles detected and generated.** Jars shipping their own per-mixin kill
+  switch are recognized from bytecode alone: CaffeineMC-style systems (Sodium/Lithium/
+  ModernFix and clones) via the properties path baked into their mixin-config plugin class,
+  and Debugify via its bug-id package convention. The scan records which mixin classes are
+  togglable and through which key (`JarIndex.mixin_toggles`), conflicts list the concrete
+  mixin classes per mod (`methodDetails.mixinClasses`), and a generator emits the minimal
+  override file (`mixin.<package>=false` lines / `{"MC-xxxxx": false}`) that disables only
+  the conflicting mixins — the lowest-risk rung of the fix ladder
+  (`app/analyzer/mods.py`, `app/resolve/mixin_toggles.py`).
+
 ### Changed
 
 - **Mixin selectors resolve through the jar's refmap.** String selectors in mixin annotations

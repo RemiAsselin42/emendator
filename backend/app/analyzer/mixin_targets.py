@@ -331,6 +331,20 @@ def _method_injections(
     return injections
 
 
+def class_string_constants(class_bytes: bytes) -> set[str]:
+    """Every UTF-8 constant in a class file's constant pool.
+
+    Cheap ground truth for "does this class mention X" questions — e.g. finding
+    the ``config/….properties`` file a mixin-config plugin reads, without
+    executing or fully modeling the class. Best-effort: empty set on failure.
+    """
+    try:
+        parsed = _ClassFile(class_bytes)
+    except (ValueError, IndexError, struct.error):
+        return set()
+    return set(parsed.utf8.values())
+
+
 def extract_mixin_targets(class_bytes: bytes, refmap: dict[str, str] | None = None) -> MixinTargets:
     """Class targets, ``Class#method`` pairs and injection records from bytecode.
 

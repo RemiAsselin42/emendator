@@ -15,18 +15,20 @@ their mod ids and mixins; nested recipes/tags are intentionally excluded (see
 import hashlib
 import io
 import json
+import re
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from app.analyzer.detectors import JarIndex, MixinMethodPatch, detect_conflicts
+from app.analyzer.detectors import JarIndex, MixinMethodPatch, MixinToggleSystem, detect_conflicts
 from app.analyzer.metadata import FABRIC_METADATA, QUILT_METADATA, parse_mod_metadata
 from app.analyzer.mixin_targets import (
     DEFAULT_PRIORITY,
     INSTRUCTION_EXCLUSIVE_KINDS,
     MixinTargets,
+    class_string_constants,
     extract_mixin_targets,
 )
 from app.models import (
@@ -78,14 +80,25 @@ class _JarMixins:
     classes: set[str] = field(default_factory=set)
     methods: set[str] = field(default_factory=set)
     patches: dict[str, MixinMethodPatch] = field(default_factory=dict)
+    toggles: MixinToggleSystem | None = None
 
     def merge(self, other: "_JarMixins") -> None:
         self.classes |= other.classes
         self.methods |= other.methods
         for key, patch in other.patches.items():
             self.patches.setdefault(key, MixinMethodPatch()).merge(patch)
+        self._merge_toggles(other.toggles)
 
-    def add(self, targets: MixinTargets, priority: int, required: bool = False) -> None:
+    def _merge_toggles(self, toggles: MixinToggleSystem | None) -> None:
+        """Union keys when the same file, keep the first system otherwise."""
+        if toggles is None:
+            return
+        if self.toggles is None:
+            self.toggles = toggles
+        elif self.toggles.file == toggles.file:
+            self.toggles.keys.update(toggles.keys)
+
+    def add(self, targets: MixinTargets, priority: int, required: bool, mixin_class: str) -> None:
         """Fold one mixin class's extraction in; ``priority``/``required`` are config defaults."""
         self.classes |= targets.classes
         self.methods |= targets.methods
@@ -97,6 +110,7 @@ class _JarMixins:
                 patch.kinds.add(injection.kind)
                 patch.priorities.add(effective)
                 patch.required = patch.required or required
+                patch.mixin_classes.add(mixin_class)
                 if injection.kind in INSTRUCTION_EXCLUSIVE_KINDS:
                     patch.exclusive_at.update(injection.at_targets)
 
@@ -183,6 +197,46 @@ def _read_refmap(zf: zipfile.ZipFile, name: Any) -> dict[str, dict[str, str]]:
     }
 
 
+# A CaffeineMC-style plugin holds its properties path as a string constant.
+_TOGGLE_PROPERTIES_RE = re.compile(r"^(?:\./)?config/([\w.\-]+\.properties)$")
+# Debugify encodes the bug id in each mixin's package: ...mixins.basic.mc100991.FooMixin
+_DEBUGIFY_BUG_RE = re.compile(r"\.mc(\d+)\.")
+_DEBUGIFY_PLUGIN_PREFIX = "dev.isxander.debugify."
+
+
+def _toggle_properties_file(zf: zipfile.ZipFile, plugin: str) -> str | None:
+    """The CaffeineMC-style properties path baked into the config's plugin class.
+
+    Sodium/Lithium/ModernFix (and clones) keep the exact file name — e.g.
+    ``./config/lithium.properties`` — as a constant in the plugin class that
+    loads it. Library adopters resolving the path elsewhere are missed (rare;
+    they can be added as known ids later).
+    """
+    try:
+        constants = class_string_constants(zf.read(plugin.replace(".", "/") + ".class"))
+    except (KeyError, OSError):
+        return None
+    for constant in constants:
+        match = _TOGGLE_PROPERTIES_RE.match(constant)
+        if match:
+            return f"config/{match.group(1)}"
+    return None
+
+
+def _toggle_key(kind: str, entry: str, full_class: str) -> str | None:
+    """The option key that gates one mixin class, per system.
+
+    CaffeineMC family: ``mixin.<subpackage>`` — per-package granularity, so a
+    class sitting directly in the config root has no key. Debugify: the
+    ``MC-<id>`` encoded in the package path.
+    """
+    if kind == "debugify":
+        match = _DEBUGIFY_BUG_RE.search(f".{full_class.rsplit('.', 1)[0]}.")
+        return f"MC-{match.group(1)}" if match else None
+    package, _, _ = entry.rpartition(".")
+    return f"mixin.{package}" if package else None
+
+
 def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> _JarMixins:
     """``@Mixin`` targets, ``Class#method`` pairs and patch info across the jar."""
     out = _JarMixins()
@@ -195,7 +249,8 @@ def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> _JarMixins:
             continue
         if not isinstance(config, dict) or not isinstance(config.get("package"), str):
             continue
-        base = config["package"].replace(".", "/")
+        package = config["package"]
+        base = package.replace(".", "/")
         refmap = _read_refmap(zf, config.get("refmap"))
         config_priority = config.get("priority")
         default_priority = config_priority if isinstance(config_priority, int) else DEFAULT_PRIORITY
@@ -205,6 +260,17 @@ def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> _JarMixins:
             default_require = injectors.get("defaultRequire")
             if isinstance(default_require, int) and default_require >= 1:
                 required = True
+
+        plugin = config.get("plugin")
+        toggles: MixinToggleSystem | None = None
+        if isinstance(plugin, str) and plugin:
+            if plugin.startswith(_DEBUGIFY_PLUGIN_PREFIX):
+                toggles = MixinToggleSystem(kind="debugify", file="config/debugify.json")
+            else:
+                properties_file = _toggle_properties_file(zf, plugin)
+                if properties_file:
+                    toggles = MixinToggleSystem(kind="properties", file=properties_file)
+
         for section in _MIXIN_SECTIONS:
             mixin_classes = config.get(section)
             if not isinstance(mixin_classes, list):
@@ -219,7 +285,14 @@ def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> _JarMixins:
                     )
                 except KeyError:
                     continue
-                out.add(targets, default_priority, required)
+                full_class = f"{package}.{class_name}"
+                out.add(targets, default_priority, required, full_class)
+                if toggles is not None:
+                    key = _toggle_key(toggles.kind, class_name, full_class)
+                    if key:
+                        toggles.keys[full_class] = key
+        if toggles is not None and toggles.keys:
+            out._merge_toggles(toggles)
     return out
 
 
@@ -298,6 +371,7 @@ def build_jar_index(
                 mixin_targets=mixins.classes,
                 mixin_method_targets=mixins.methods,
                 mixin_method_patches=mixins.patches,
+                mixin_toggles=mixins.toggles,
                 bundled_ids=nested.ids,
             )
     except zipfile.BadZipFile:
