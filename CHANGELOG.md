@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   override file (`mixin.<package>=false` lines / `{"MC-xxxxx": false}`) that disables only
   the conflicting mixins — the lowest-risk rung of the fix ladder
   (`app/analyzer/mods.py`, `app/resolve/mixin_toggles.py`).
+- **Filter-mod config generation.** When no mod-own toggle covers a conflicting mixin, the
+  next rung generates the config of an installable filter mod that cancels it at load time:
+  Mixin Blacklist on Fabric/Quilt (`config/mixinblacklist.json`) or Mixin Helper on
+  (Neo)Forge 1.20.1/1.21.1 (`config/mixinhelper.json`), blacklisting by mixin class name —
+  the one identifier that needs no mapping work. Both slugs install via the existing
+  `/mods/install` flow (`app/resolve/mixin_filters.py`).
 
 ### Changed
 
