@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-06
+
+### Added
+
+- **MCP server — drive Emendator from your AI client.** `emendator-backend mcp` (or
+  `python -m app.mcp`) serves the whole pipeline over stdio MCP: scan with graded conflict
+  reasoning, headless boots and bisection, the persisted-run evidence store, and the mixin
+  fix ladder (plan / apply / revert / verify) plus per-jar levers. Every mutating tool is
+  dry-run until `apply: true`, all mutations flow through the same revert manifests as the
+  UI, and errors are structured values for agent loops. Ships with a one-click Claude
+  Desktop package (`scripts/build-mcpb.sh` → `emendator.mcpb`) and a client guide
+  (`docs/mcp.md`) (`app/mcp.py`).
+
 ## [0.3.0] — 2026-07-06
 
 ### Added
@@ -216,7 +229,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   datapacks, with preview and export from the UI.
 - **CI.** Windows installer build and draft release on tag.
 
-[Unreleased]: https://github.com/RemiAsselin42/emendator/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/RemiAsselin42/emendator/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/RemiAsselin42/emendator/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/RemiAsselin42/emendator/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/RemiAsselin42/emendator/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/RemiAsselin42/emendator/compare/v0.1.1...v0.1.2

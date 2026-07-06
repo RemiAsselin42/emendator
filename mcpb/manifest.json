@@ -1,0 +1,40 @@
+{
+  "$schema": "https://raw.githubusercontent.com/modelcontextprotocol/mcpb/main/dist/manifest.schema.json",
+  "manifest_version": "0.2",
+  "name": "emendator",
+  "display_name": "Emendator",
+  "version": "0.4.0",
+  "description": "Analyze and fix Minecraft modpack conflicts: graded mixin detection, headless Docker boots, crash bisection, and a precise reversible fix ladder.",
+  "author": {
+    "name": "Rémi Asselin",
+    "url": "https://github.com/RemiAsselin42/emendator"
+  },
+  "server": {
+    "type": "binary",
+    "entry_point": "server/emendator-backend.exe",
+    "mcp_config": {
+      "command": "${__dirname}/server/emendator-backend.exe",
+      "args": ["mcp"]
+    }
+  },
+  "tools": [
+    { "name": "scan_instance", "description": "Scan a modpack: mods + graded conflict map" },
+    { "name": "run_test", "description": "Boot the set headless in Docker and classify" },
+    { "name": "bisect", "description": "Delta-debug a crash to the guilty subset" },
+    { "name": "list_runs", "description": "Persisted boot runs (evidence store)" },
+    { "name": "get_run", "description": "Full persisted verdict of one run" },
+    { "name": "get_run_log", "description": "Unabridged latest.log of a run" },
+    { "name": "get_run_crash", "description": "A run's crash report" },
+    { "name": "plan_mixin_fixes", "description": "Plan the precise mixin fix ladder" },
+    { "name": "apply_mixin_fixes", "description": "Apply planned fixes (dry-run gated)" },
+    { "name": "revert_mixin_fixes", "description": "Undo an apply by manifest" },
+    { "name": "verify_mixin_fixes", "description": "Re-boot and diff vs the baseline run" },
+    { "name": "disable_mod", "description": "Sideline one jar (gated, reversible)" },
+    { "name": "enable_mod", "description": "Restore a sidelined jar (gated)" },
+    { "name": "update_mod", "description": "Swap a jar to its latest build (gated)" },
+    { "name": "rollback_mod", "description": "Swap a jar to the previous release (gated)" }
+  ],
+  "compatibility": {
+    "platforms": ["win32"]
+  }
+}
