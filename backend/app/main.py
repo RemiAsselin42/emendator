@@ -8,14 +8,19 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
+from app.ai.fixer import run_ai_fix
 from app.analyzer.mods import read_jars_metadata, read_mods_metadata, scan_jars, scan_mods_folder
 from app.analyzer.packs import scan_datapacks, scan_resourcepacks
 from app.analyzer.registry_index import build_registry_index
 from app.config import settings
-from app.credentials import load_into_settings, set_curseforge_key
+from app.credentials import load_into_settings, set_anthropic_key, set_curseforge_key
 from app.enrich import curseforge, enrich_mods
 from app.enrich.install import disable_mod, enable_mod, install_mod, rollback_mod, update_mod
 from app.models import (
+    AiFixRequest,
+    AiFixResult,
+    AnthropicKeyRequest,
+    AnthropicStatus,
     ApplyRequest,
     ApplyResult,
     BisectResult,
@@ -76,7 +81,7 @@ from app.runner.runner import detect_loader, is_docker_available, run_set
 from app.sources.discovery import discover_instances
 from app.sources.instance import detect_instance, mods_jars
 
-app = FastAPI(title="Emendator backend", version="0.4.0")
+app = FastAPI(title="Emendator backend", version="0.5.0")
 
 # Fold a UI-stored CurseForge key (if any) into live settings before serving, so
 # the install fallback is armed without a restart. Env-provided keys still win.
@@ -438,6 +443,45 @@ def mods_install(req: InstallRequest) -> InstallResult:
     loader = req.loader or detect_loader(mods_dir)
     game_version = req.version or _resolve_for(mods_dir, None)[0].profile
     return install_mod(mods_dir, req.mod_id, loader, game_version)
+
+
+@app.get("/config/anthropic", response_model=AnthropicStatus)
+def anthropic_status() -> AnthropicStatus:
+    """Whether a BYO Anthropic API key is configured (drives the Settings UI)."""
+    return AnthropicStatus(configured=bool(settings.anthropic_api_key))
+
+
+@app.post("/config/anthropic", response_model=AnthropicStatus)
+def anthropic_set_key(req: AnthropicKeyRequest) -> AnthropicStatus:
+    """Save (or, with a blank string, clear) the user's Anthropic API key."""
+    set_anthropic_key(req.api_key)
+    return AnthropicStatus(configured=bool(settings.anthropic_api_key))
+
+
+@app.post("/ai/fix", response_model=AiFixResult)
+def ai_fix(req: AiFixRequest) -> AiFixResult:
+    """Run the AI fix loop: the model decides, deterministic code applies, a boot verifies.
+
+    Very long-running: every iteration includes a real Docker boot. Requires a
+    BYO Anthropic key (400 otherwise); everything applied is revertible via the
+    returned manifest.
+    """
+    if not settings.anthropic_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="No Anthropic API key configured - add yours in Settings first.",
+        )
+    root = _require_dir(req.path)
+    profile, _ = _resolve_for_jars(mods_jars(detect_instance(root)), req.version)
+    return run_ai_fix(
+        root,
+        profile,
+        api_key=settings.anthropic_api_key,
+        model=settings.ai_model,
+        max_iterations=req.max_iterations or settings.ai_max_iterations,
+        token_cap=settings.ai_token_cap,
+        baseline_run_id=req.baseline_run_id,
+    )
 
 
 @app.get("/config/curseforge", response_model=CurseForgeStatus)

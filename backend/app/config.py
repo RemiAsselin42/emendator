@@ -21,6 +21,13 @@ class Settings(BaseSettings):
     # offline manifest enrichment needs no key).
     enrich_online: bool = True
     curseforge_api_key: str | None = None
+    # BYO Anthropic API key for the in-app AI fix loop (never bundled; the
+    # user supplies their own via Settings or EMENDATOR_ANTHROPIC_API_KEY).
+    anthropic_api_key: str | None = None
+    # Model + caps for the AI fix loop.
+    ai_model: str = "claude-opus-4-8"
+    ai_max_iterations: int = 3
+    ai_token_cap: int = 500_000  # total in+out tokens per fix loop
     # Where enrichment responses are cached; defaults to ~/.emendator/cache.
     cache_dir: str | None = None
     # Where boot-run evidence is persisted; defaults to ~/.emendator/runs.

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-06
+
+### Added
+
+- **AI fix loop (BYO Anthropic key).** `POST /ai/fix` lets a Claude model drive the mixin fix
+  ladder: each turn it must choose exactly one action through a strict tool (apply the planned
+  fixes with optional loser overrides, roll a jar back, disable a jar, or stop), deterministic
+  code executes it through the same reversible machinery as the UI, and a real boot verifies
+  the crash signature is gone. Bounded by iteration and token caps; everything is undoable via
+  the returned manifest. The key is the user's own (Settings → Anthropic API key, stored like
+  the CurseForge key; `EMENDATOR_ANTHROPIC_API_KEY` wins), requests go directly to Anthropic,
+  and the Mixins panel gains a "Fix with AI" button with an action-chain + token-spend summary
+  and one-click revert (`app/ai/fixer.py`, `views.tsx`, `Settings.tsx`).
+
 ## [0.4.0] — 2026-07-06
 
 ### Added
@@ -229,7 +243,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   datapacks, with preview and export from the UI.
 - **CI.** Windows installer build and draft release on tag.
 
-[Unreleased]: https://github.com/RemiAsselin42/emendator/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/RemiAsselin42/emendator/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/RemiAsselin42/emendator/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/RemiAsselin42/emendator/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/RemiAsselin42/emendator/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/RemiAsselin42/emendator/compare/v0.1.2...v0.2.0

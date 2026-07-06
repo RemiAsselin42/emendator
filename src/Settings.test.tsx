@@ -6,6 +6,8 @@ import { Settings } from "./Settings";
 
 vi.mock("./lib/api", () => ({
   setCurseForgeKey: vi.fn(),
+  getAnthropicStatus: vi.fn(),
+  setAnthropicKey: vi.fn(),
 }));
 
 const UNCONFIGURED: CurseForgeStatus = { configured: false, valid: null, detail: null };
@@ -13,6 +15,8 @@ const CONFIGURED: CurseForgeStatus = { configured: true, valid: true, detail: nu
 
 beforeEach(() => {
   vi.mocked(api.setCurseForgeKey).mockResolvedValue(UNCONFIGURED);
+  vi.mocked(api.getAnthropicStatus).mockResolvedValue({ configured: false });
+  vi.mocked(api.setAnthropicKey).mockResolvedValue({ configured: false });
 });
 
 afterEach(() => vi.clearAllMocks());
