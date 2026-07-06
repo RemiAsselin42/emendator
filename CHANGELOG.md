@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Mixin overlaps are graded by patch mechanics.** The analyzer now reads each mixin's bytecode
+  in full — `@Overwrite`, MixinExtras injectors (`@WrapOperation`, `@ModifyReturnValue`, …),
+  injection points (`@At`), priorities (annotation- and config-level), owner-scoped selectors —
+  and escalates a `mixin_overlap` to `error` when the combination provably cannot coexist: two
+  `@Overwrite` of the same method at a colliding priority, or two instruction-exclusive injectors
+  (`@Redirect`/`@ModifyConstant`) on the same call site. The per-method reasoning ships in the
+  conflict's additive `methodDetails` payload (`app/analyzer/mixin_targets.py`,
+  `app/analyzer/detectors.py`, `app/analyzer/mods.py`).
 - **Install fallback skips platform pseudo-dependencies.** A missing "dependency" that is really
   the game, Java or the loader is now reported as *not an installable mod* rather than a failed
   lookup (`modrinth.NOT_INSTALLABLE`, `InstallResult`).
