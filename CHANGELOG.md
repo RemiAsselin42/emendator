@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-07-06
+
+### Fixed
+
+- **Sidecar build failed collecting the MCP SDK.** PyInstaller's `--collect-submodules mcp`
+  walks `mcp.cli`, which imports `typer` — only present with the `mcp[cli]` extra. The
+  dependency now requests that extra, so the frozen sidecar (and the v0.4.0/v0.5.0 release
+  builds that failed on it) build cleanly (`backend/pyproject.toml`).
+
 ## [0.5.0] — 2026-07-06
 
 ### Added
@@ -243,7 +252,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   datapacks, with preview and export from the UI.
 - **CI.** Windows installer build and draft release on tag.
 
-[Unreleased]: https://github.com/RemiAsselin42/emendator/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/RemiAsselin42/emendator/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/RemiAsselin42/emendator/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/RemiAsselin42/emendator/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/RemiAsselin42/emendator/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/RemiAsselin42/emendator/compare/v0.2.0...v0.3.0
