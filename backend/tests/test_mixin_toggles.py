@@ -2,37 +2,17 @@
 
 import io
 import json
-import struct
 import zipfile
 
 from app.analyzer.detectors import MixinToggleSystem
 from app.analyzer.mods import _collect_mixin_targets, _toggle_key
 from app.resolve.mixin_toggles import generate_mixin_toggles, togglable_classes
-
-
-# minimal class file: just a constant pool carrying the given utf8 strings
-def _class_with_strings(*strings: str) -> bytes:
-    pool = b""
-    count = 1
-    for text in strings:
-        encoded = text.encode("utf-8")
-        pool += struct.pack(">BH", 1, len(encoded)) + encoded
-        count += 1
-    this_utf8 = b"PluginClass"
-    pool += struct.pack(">BH", 1, len(this_utf8)) + this_utf8
-    pool += struct.pack(">BH", 7, count)  # Class -> the utf8 above
-    obj_utf8 = b"java/lang/Object"
-    pool += struct.pack(">BH", 1, len(obj_utf8)) + obj_utf8
-    pool += struct.pack(">BH", 7, count + 2)
-    header = b"\xca\xfe\xba\xbe" + struct.pack(">HH", 0, 52)
-    body = struct.pack(">HHHH", 0x0001, count + 1, count + 3, 0)  # access/this/super/ifaces
-    body += struct.pack(">HHH", 0, 0, 0)  # fields, methods, attributes
-    return header + struct.pack(">H", count + 4) + pool + body
+from tests.bytecode import strings_class
 
 
 def _mixin_class_bytes() -> bytes:
-    # reuse the string-pool builder: extract_mixin_targets tolerates plain classes
-    return _class_with_strings("unused")
+    # extract_mixin_targets tolerates plain (non-mixin) classes
+    return strings_class("unused")
 
 
 def _jar(entries: dict[str, bytes | str]) -> zipfile.ZipFile:
@@ -52,7 +32,7 @@ def test_detects_caffeinemc_properties_system() -> None:
     with _jar(
         {
             "lithium.mixins.json": json.dumps(config),
-            "net/caffeinemc/mods/lithium/mixin/LithiumMixinPlugin.class": _class_with_strings(
+            "net/caffeinemc/mods/lithium/mixin/LithiumMixinPlugin.class": strings_class(
                 "./config/lithium.properties"
             ),
             "net/caffeinemc/mods/lithium/mixin/alloc/composter/ComposterMixin.class": (
@@ -78,7 +58,7 @@ def test_no_toggle_system_without_properties_constant() -> None:
     with _jar(
         {
             "example.mixins.json": json.dumps(config),
-            "com/example/mixin/Plugin.class": _class_with_strings("just/a/string"),
+            "com/example/mixin/Plugin.class": strings_class("just/a/string"),
             "com/example/mixin/foo/BarMixin.class": _mixin_class_bytes(),
         }
     ) as zf:
