@@ -36,6 +36,7 @@ function mkMod(partial: Partial<Mod> & { id: string }): Mod {
     homepage: null,
     latestVersion: null,
     updateAvailable: null,
+    incompatibleWith: [],
     ...partial,
   };
 }

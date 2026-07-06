@@ -31,6 +31,10 @@ from app.models import (
     InstanceReport,
     JarPatchRequest,
     JarPatchResult,
+    MixinApplyRequest,
+    MixinApplyResult,
+    MixinPlanRequest,
+    MixinPlanResult,
     ResolutionPlan,
     ResolutionTargets,
     ResolutionVariants,
@@ -57,6 +61,7 @@ from app.profile import (
 from app.resolve.apply import apply_resolution, resolution_targets, revert_resolution
 from app.resolve.generate import build_resolution_plan, export_plan
 from app.resolve.jar_patch import patch_jar_mixin_config, unpatch_jar
+from app.resolve.mixins import apply_mixin_fixes, plan_mixin_fixes, revert_mixin_fixes
 from app.resolve.variants import collect_recipe_variants, recipe_winner_bodies
 from app.runner.artifacts import list_runs, read_run_text, read_run_verdict
 from app.runner.bisect import BisectProgress, bisect_set
@@ -317,6 +322,44 @@ def mods_update(req: UpdateRequest) -> UpdateResult:
     loader = req.loader or detect_loader(mods_dir)
     game_version = req.version or _resolve_for(mods_dir, None)[0].profile
     return update_mod(mods_dir, req.jar, loader, game_version)
+
+
+@app.post("/resolve/mixins", response_model=MixinPlanResult)
+def resolve_mixins(req: MixinPlanRequest) -> MixinPlanResult:
+    """Plan the mixin fix ladder for the instance's actionable overlaps.
+
+    Per conflict: the loser pick (overridable via ``losers``) and the cheapest
+    viable rung — the mod's own toggle, a filter-mod config, else disable —
+    with rollback / jar-patch listed as manual alternatives.
+    """
+    root = _require_dir(req.path)
+    profile, _ = _resolve_for_jars(mods_jars(detect_instance(root)), req.version)
+    return plan_mixin_fixes(root, profile, req.losers)
+
+
+@app.post("/resolve/mixins/apply", response_model=MixinApplyResult)
+def resolve_mixins_apply(req: MixinApplyRequest) -> MixinApplyResult:
+    """Execute the planned mixin fixes, reversibly.
+
+    Generated config files are merged into any existing user file (prior
+    content is captured), the filter mod is installed when needed, disables
+    use the ``.disabled`` rename — all recorded in a manifest for revert.
+    """
+    root = _require_dir(req.path)
+    profile, _ = _resolve_for_jars(mods_jars(detect_instance(root)), req.version)
+    return apply_mixin_fixes(
+        root,
+        profile,
+        losers=req.losers,
+        targets=req.targets,
+        allow_disable=req.allow_disable,
+    )
+
+
+@app.post("/resolve/mixins/revert", response_model=MixinApplyResult)
+def resolve_mixins_revert(req: RevertRequest) -> MixinApplyResult:
+    """Undo a prior mixin apply by its manifest (restore files, re-enable jars)."""
+    return revert_mixin_fixes(Path(req.manifest))
 
 
 @app.post("/mods/patch", response_model=JarPatchResult)

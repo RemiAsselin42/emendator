@@ -44,6 +44,8 @@ export interface Mod {
   homepage: string | null;
   latestVersion: string | null;
   updateAvailable: boolean | null;
+  // In-pack mods this build declares incompatible on Modrinth.
+  incompatibleWith: string[];
 }
 
 export type ConflictType =
@@ -277,6 +279,98 @@ export function disableMod(path: string, jar: string): Promise<DisableResult> {
 /** Re-enable a previously disabled mod (restores its jar from `disabled/`). */
 export function enableMod(path: string, jar: string): Promise<DisableResult> {
   return postJson<DisableResult>("/mods/enable", { path, jar });
+}
+
+/** Roll a jar back to the Modrinth version released just before it (the
+ *  "downgrade to known-good" lever when the current build introduced a conflict). */
+export function rollbackMod(
+  path: string,
+  jar: string,
+  version?: string,
+  loader?: Loader,
+): Promise<UpdateResult> {
+  return postJson<UpdateResult>("/mods/rollback", { path, jar, version, loader });
+}
+
+// --- Mixin fix ladder (plan → apply → revert) -------------------------------
+
+export type MixinFixKind =
+  | "toggle"
+  | "install_filter"
+  | "filter_config"
+  | "rollback"
+  | "jar_patch"
+  | "disable";
+
+export interface MixinFixAction {
+  kind: MixinFixKind;
+  mod: string;
+  jar: string | null;
+  file: { path: string; content: string } | null;
+  mixinClasses: string[];
+  featureHints: string[]; // what the disabled mixins provided, human-readable
+  filterSlug: string | null;
+  note: string | null;
+}
+
+export interface MixinFixPlan {
+  target: string;
+  members: string[];
+  loser: string;
+  rung: "toggle" | "filter" | "disable" | "none";
+  actions: MixinFixAction[];
+  alternatives: string[]; // manual rungs: "rollback", "jar_patch"
+  note: string | null;
+}
+
+export interface MixinPlanResult {
+  plans: MixinFixPlan[];
+  loader: Loader;
+  filterMod: string | null; // applicable filter-mod slug for this pack
+}
+
+export interface MixinApplyResult {
+  status: "applied" | "nothing" | "error";
+  written: string[];
+  disabled: string[];
+  installed: string[];
+  manifest: string | null;
+  message: string | null;
+}
+
+/** Plan the mixin fix ladder: per conflict, the loser and the cheapest viable
+ *  rung (own toggle → filter config → disable), plus manual alternatives. */
+export function planMixinFixes(
+  path: string,
+  version?: string,
+  losers?: Record<string, string>,
+): Promise<MixinPlanResult> {
+  return postJson<MixinPlanResult>("/resolve/mixins", { path, version, losers });
+}
+
+/** Execute the planned mixin fixes reversibly (configs merged into any existing
+ *  user file, disables via `.disabled`, everything recorded in a manifest). */
+export function applyMixinFixes(
+  path: string,
+  version?: string,
+  options?: {
+    losers?: Record<string, string>;
+    targets?: string[];
+    allowDisable?: boolean;
+  },
+): Promise<MixinApplyResult> {
+  return postJson<MixinApplyResult>("/resolve/mixins/apply", {
+    path,
+    version,
+    losers: options?.losers,
+    targets: options?.targets,
+    allowDisable: options?.allowDisable ?? true,
+  });
+}
+
+/** Undo a prior mixin apply by its manifest (restores files, re-enables jars). */
+export function revertMixinFixes(manifest: string): Promise<MixinApplyResult> {
+  return postJson<MixinApplyResult>("/resolve/mixins/revert", { manifest });
 }
 
 /** Raised when /mods/scan returns 409: the set spans incompatible version

@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now also reads each version's Modrinth dependency metadata and resolves `incompatible`
   declarations against the pack: `Mod.incompatibleWith` lists the in-pack mods a build is
   formally incompatible with (`app/enrich/modrinth.py`, `app/enrich/install.py`).
+- **Mixin fix ladder: plan → apply → revert.** `POST /resolve/mixins` plans, per actionable
+  overlap, the loser and the cheapest viable rung — the mod's own toggle, a filter-mod config
+  (installing the filter mod when absent), else disable — with rollback and jar-patch offered
+  as manual alternatives, and a human hint of what each fix trades away. Apply merges
+  generated configs into existing user files (prior content is captured), sidelines jars via
+  `.disabled`, and records everything in a manifest that `POST /resolve/mixins/revert`
+  restores — including previously-user-owned file content and installed filter jars. The
+  Mixins sub-tab gains a "Plan precise fixes" panel driving the whole flow
+  (`app/resolve/mixins.py`, `views.tsx`).
 - **Jar mixin-config patching (last resort, gated).** `POST /mods/patch` removes mixin
   entries, flips `required` or adjusts `priority` inside a jar's mixin config and re-zips it
   — perfectly precise, but it edits a file the user doesn't own, so the endpoint refuses to

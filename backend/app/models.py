@@ -425,6 +425,87 @@ class UpdateResult(CamelModel):
     message: str | None = None
 
 
+# --- Mixin fix ladder: plan + apply (Phase 2.5) -------------------------------
+
+# One rung of the escalation ladder, most precise & least risky first.
+MixinFixKind = Literal[
+    "toggle",  # the mod's own per-mixin kill switch (config file)
+    "install_filter",  # install the filter mod that the filter_config feeds
+    "filter_config",  # Mixin Blacklist / Mixin Helper config
+    "rollback",  # swap the jar for the previous Modrinth release
+    "jar_patch",  # edit the jar's mixin config (gated, last resort)
+    "disable",  # sideline the whole jar (.disabled rename)
+]
+
+
+class MixinFixAction(CamelModel):
+    """One concrete step of a mixin fix (a file to write or a jar operation)."""
+
+    kind: MixinFixKind
+    mod: str
+    jar: str | None = None
+    file: GeneratedFile | None = None  # for toggle / filter_config
+    mixin_classes: list[str] = []
+    # Human hint of what the disabled mixins provided ("alloc composter", ...).
+    feature_hints: list[str] = []
+    filter_slug: str | None = None  # for install_filter
+    note: str | None = None
+
+
+class MixinFixPlan(CamelModel):
+    """The chosen fix for one mixin-overlap conflict (per target class)."""
+
+    target: str
+    members: list[str]
+    loser: str  # the mod whose mixins get switched off / sidelined
+    rung: str  # "toggle" | "filter" | "disable" | "none"
+    actions: list[MixinFixAction] = []
+    # Ladder rungs available as manual alternatives ("rollback", "jar_patch", …).
+    alternatives: list[str] = []
+    note: str | None = None
+
+
+class MixinPlanRequest(CamelModel):
+    """Body of ``POST /resolve/mixins``: plan fixes for the scanned instance."""
+
+    path: str  # instance root (content folders resolved from it)
+    version: str | None = None
+    # Explicit loser picks (conflict target class -> mod id); absent targets
+    # use the planner's default (fewest dependents, cheapest viable rung).
+    losers: dict[str, str] | None = None
+
+
+class MixinPlanResult(CamelModel):
+    """The per-conflict fix plans plus pack-level context for the UI."""
+
+    plans: list[MixinFixPlan] = []
+    loader: Loader = "unknown"
+    filter_mod: str | None = None  # applicable filter-mod slug for this pack
+
+
+class MixinApplyRequest(CamelModel):
+    """Body of ``POST /resolve/mixins/apply``: execute the planned fixes."""
+
+    path: str
+    version: str | None = None
+    losers: dict[str, str] | None = None
+    # Restrict to these conflict targets (None = every planned fix).
+    targets: list[str] | None = None
+    # Permit the disable fallback for conflicts with no precise rung.
+    allow_disable: bool = True
+
+
+class MixinApplyResult(CamelModel):
+    """Outcome of applying mixin fixes, with the manifest needed to revert."""
+
+    status: ApplyStatus
+    written: list[str] = []
+    disabled: list[str] = []  # jar names sidelined (.disabled)
+    installed: list[str] = []  # jars added (filter mod)
+    manifest: str | None = None
+    message: str | None = None
+
+
 # --- Patch a jar's mixin config (last-resort fix, explicit consent) ----------
 
 
