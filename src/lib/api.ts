@@ -128,13 +128,23 @@ export interface RunCause {
   excerpt: string | null;
 }
 
+export interface MixinApplication {
+  mixinClass: string;
+  config: string; // the mixin config file that declared it
+  targetClass: string;
+  mod: string | null; // owning mod id when the loader annotated the config
+}
+
 export interface RunVerdict {
   status: RunStatus;
   profile: string;
   durationMs: number;
   cause: RunCause | null;
   mixinExports: string[];
+  mixinApplications: MixinApplication[];
   logTail: string | null;
+  crashReport: string | null; // full newest crash report, unabridged
+  runId: string | null; // persisted-evidence handle (GET /runner/runs/{id}/…)
 }
 
 export type BisectStatus = "isolated" | "no_conflict" | "inconclusive" | "error";
@@ -371,6 +381,27 @@ export function applyMixinFixes(
 /** Undo a prior mixin apply by its manifest (restores files, re-enables jars). */
 export function revertMixinFixes(manifest: string): Promise<MixinApplyResult> {
   return postJson<MixinApplyResult>("/resolve/mixins/revert", { manifest });
+}
+
+export interface MixinVerifyResult {
+  verdict: RunVerdict;
+  fixed: boolean | null; // null = no baseline run to compare against
+  baselineCategory: string | null;
+  exportsRemoved: string[]; // classes the loader no longer transforms
+  note: string | null; // client-section mixins are never boot-verified
+}
+
+/** Re-boot the set and diff against the pre-fix baseline run (long-running). */
+export function verifyMixinFixes(
+  path: string,
+  version?: string,
+  baselineRunId?: string | null,
+): Promise<MixinVerifyResult> {
+  return postJson<MixinVerifyResult>("/resolve/mixins/verify", {
+    path,
+    version,
+    baselineRunId: baselineRunId ?? undefined,
+  });
 }
 
 /** Raised when /mods/scan returns 409: the set spans incompatible version

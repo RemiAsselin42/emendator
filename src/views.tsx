@@ -19,6 +19,7 @@ import type {
   Loader,
   MixinApplyResult,
   MixinFixPlan,
+  MixinVerifyResult,
   Mod,
   ModEnvironment,
   ProviderLink,
@@ -44,6 +45,7 @@ import {
   revertMixinFixes,
   revertResolution,
   updateMod,
+  verifyMixinFixes,
 } from "./lib/api";
 import {
   CONFLICT_LABEL,
@@ -2198,12 +2200,34 @@ const RUNG_LABEL: Record<string, string> = {
 // Plan → apply → revert for the precise fix ladder (backend /resolve/mixins).
 // Sits above the cluster cards: the cards stay the per-mod manual controls,
 // this drives the whole-conflict precise path (toggle / filter / disable).
-function PreciseMixinFixes({ instanceRoot, version }: { instanceRoot: string; version: string }) {
+function PreciseMixinFixes({
+  instanceRoot,
+  version,
+  baselineRunId,
+}: {
+  instanceRoot: string;
+  version: string;
+  baselineRunId: string | null;
+}) {
   const [plans, setPlans] = useState<MixinFixPlan[] | null>(null);
   const [planning, setPlanning] = useState(false);
   const [applying, setApplying] = useState(false);
   const [result, setResult] = useState<MixinApplyResult | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyOutcome, setVerifyOutcome] = useState<MixinVerifyResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const verify = async () => {
+    setVerifying(true);
+    setError(null);
+    try {
+      setVerifyOutcome(await verifyMixinFixes(instanceRoot, version || undefined, baselineRunId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   const plan = async () => {
     setPlanning(true);
@@ -2274,19 +2298,47 @@ function PreciseMixinFixes({ instanceRoot, version }: { instanceRoot: string; ve
             className="btn-secondary no-wrap"
             type="button"
             onClick={() => void revert()}
-            disabled={applying}
+            disabled={applying || verifying}
           >
             Revert fixes
           </button>
         )}
-        {result && (
+        {result?.status === "applied" && (
+          <button
+            className="btn-primary no-wrap"
+            type="button"
+            onClick={() => void verify()}
+            disabled={verifying || applying}
+            title="Boot the set again and confirm the previous crash signature is gone. Client-section mixins are never exercised by a server boot — those still need an in-game check."
+          >
+            {verifying ? "Verifying (booting)…" : "Verify fix (boot)"}
+          </button>
+        )}
+        {result && !verifyOutcome && (
           <span className="note">
             {result.status === "applied"
               ? `Applied: ${result.written.length} file(s)` +
                 (result.disabled.length ? `, ${result.disabled.length} disabled` : "") +
-                (result.installed.length ? `, filter mod installed` : "") +
-                " — run the test again to verify."
+                (result.installed.length ? ", filter mod installed" : "") +
+                " — verify with a boot."
               : (result.message ?? result.status)}
+          </span>
+        )}
+        {verifyOutcome && (
+          <span className="note">
+            {verifyOutcome.fixed === true && (
+              <span className="run-ok">
+                Fixed — the previous crash signature is gone
+                {verifyOutcome.exportsRemoved.length > 0 &&
+                  ` (${verifyOutcome.exportsRemoved.length} class(es) no longer patched)`}
+                .
+              </span>
+            )}
+            {verifyOutcome.fixed === false && (
+              <span className="run-crash">Still failing with the same signature.</span>
+            )}
+            {verifyOutcome.fixed === null &&
+              `Boot ${verifyOutcome.verdict.status.toUpperCase()} — no baseline run to compare.`}
           </span>
         )}
         {error && <span className="note run-error">{error}</span>}
@@ -2414,7 +2466,11 @@ function MixinResolver({
   const cardProps = { modsPath, version, updatedJars, onUpdated };
   return (
     <section className="mixin-resolver">
-      <PreciseMixinFixes instanceRoot={instanceRoot} version={version} />
+      <PreciseMixinFixes
+        instanceRoot={instanceRoot}
+        version={version}
+        baselineRunId={verdict?.runId ?? null}
+      />
       <section className="runner">
         <button
           className="btn-secondary no-wrap"

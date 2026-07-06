@@ -35,13 +35,16 @@ from app.models import (
     MixinFixAction,
     MixinFixPlan,
     MixinPlanResult,
+    MixinVerifyResult,
     Mod,
+    RunRequest,
 )
 from app.profile import VersionProfile
 from app.resolve.apply import _base_dir
 from app.resolve.mixin_filters import generate_filter_config, pick_filter_mod
 from app.resolve.mixin_toggles import generate_mixin_toggles, togglable_classes
-from app.runner.runner import detect_loader
+from app.runner.artifacts import read_run_verdict
+from app.runner.runner import detect_loader, run_set
 from app.sources.instance import detect_instance, mods_jars
 
 MIXIN_MANIFEST = ".emendator-mixins.json"
@@ -438,4 +441,50 @@ def revert_mixin_fixes(manifest_path: Path) -> MixinApplyResult:
         disabled=enabled,
         installed=removed,
         message="Reverted.",
+    )
+
+
+# --- verify (Phase 2.6) --------------------------------------------------------
+
+# Server boots load only `mixins`/`server` config sections; a fix aimed at a
+# client-section mixin can only be confirmed in-game.
+CLIENT_SECTION_NOTE = (
+    "Headless server boot never exercises client-section mixins — "
+    "a client-side fix still needs an in-game check."
+)
+
+
+def verify_mixin_fixes(
+    root: Path, profile: VersionProfile, baseline_run_id: str | None
+) -> MixinVerifyResult:
+    """Re-boot the set and diff the outcome against the pre-fix baseline run.
+
+    ``fixed`` is true when the baseline crash signature is gone: a clean boot,
+    or a failure with a different cause category. ``exports_removed`` lists the
+    classes the loader transformed in the baseline but no longer does — the
+    ground-truth confirmation that the targeted mixins were switched off.
+    """
+    instance = detect_instance(root)
+    jars = mods_jars(instance)
+    mods_dir = jars[0].parent if jars else root
+    verdict = run_set(RunRequest(path=str(mods_dir)), profile)
+
+    baseline = read_run_verdict(baseline_run_id) if baseline_run_id else None
+    fixed: bool | None = None
+    baseline_category = None
+    exports_removed: list[str] = []
+    if baseline is not None:
+        baseline_category = baseline.cause.category if baseline.cause else None
+        new_category = verdict.cause.category if verdict.cause else None
+        fixed = verdict.status == "ok" or (
+            baseline_category is not None and new_category != baseline_category
+        )
+        exports_removed = sorted(set(baseline.mixin_exports) - set(verdict.mixin_exports))
+
+    return MixinVerifyResult(
+        verdict=verdict,
+        fixed=fixed,
+        baseline_category=baseline_category,
+        exports_removed=exports_removed,
+        note=CLIENT_SECTION_NOTE,
     )

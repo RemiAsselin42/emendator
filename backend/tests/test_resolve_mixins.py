@@ -138,6 +138,66 @@ def test_apply_disable_fallback_and_revert_reenables(
     assert (tmp_path / "a.jar").is_file()  # back in the boot set
 
 
+def test_verify_diffs_against_the_baseline_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import settings
+    from app.models import RunCause, RunVerdict
+    from app.runner.artifacts import persist_run
+
+    _mixin_jar(tmp_path, "a", with_toggle=True)
+    monkeypatch.setattr(settings, "runs_dir", str(tmp_path / "runs"))
+
+    # the failing pre-fix boot, persisted as the baseline
+    baseline = RunVerdict(
+        status="crash",
+        profile="1.21.1",
+        duration_ms=1,
+        cause=RunCause(category="mixin_apply", summary="boom"),
+        mixin_exports=["net.minecraft.class_1", "net.minecraft.class_2"],
+    )
+    workdir = tmp_path / "w"
+    (workdir / "logs").mkdir(parents=True)
+    (workdir / "logs" / "latest.log").write_text("x")
+    run_id = persist_run(workdir, baseline)
+    assert run_id is not None
+
+    fresh = RunVerdict(
+        status="ok", profile="1.21.1", duration_ms=1, mixin_exports=["net.minecraft.class_2"]
+    )
+    monkeypatch.setattr(mixins, "run_set", lambda req, profile: fresh)
+
+    result = mixins.verify_mixin_fixes(tmp_path, PROFILE, run_id)
+
+    assert result.fixed is True  # clean boot: signature gone
+    assert result.baseline_category == "mixin_apply"
+    assert result.exports_removed == ["net.minecraft.class_1"]  # mixin switched off
+    assert result.note is not None  # client-section limit is always surfaced
+
+
+def test_verify_not_fixed_when_same_signature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import settings
+    from app.models import RunCause, RunVerdict
+    from app.runner.artifacts import persist_run
+
+    _mixin_jar(tmp_path, "a", with_toggle=True)
+    monkeypatch.setattr(settings, "runs_dir", str(tmp_path / "runs"))
+    cause = RunCause(category="mixin_apply", summary="boom")
+    baseline = RunVerdict(status="crash", profile="1.21.1", duration_ms=1, cause=cause)
+    workdir = tmp_path / "w"
+    (workdir / "logs").mkdir(parents=True)
+    (workdir / "logs" / "latest.log").write_text("x")
+    run_id = persist_run(workdir, baseline)
+
+    still_failing = RunVerdict(status="crash", profile="1.21.1", duration_ms=1, cause=cause)
+    monkeypatch.setattr(mixins, "run_set", lambda req, profile: still_failing)
+
+    result = mixins.verify_mixin_fixes(tmp_path, PROFILE, run_id)
+    assert result.fixed is False
+
+
 def test_apply_respects_allow_disable_false(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

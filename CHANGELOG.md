@@ -39,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restores — including previously-user-owned file content and installed filter jars. The
   Mixins sub-tab gains a "Plan precise fixes" panel driving the whole flow
   (`app/resolve/mixins.py`, `views.tsx`).
+- **Fix verification by boot diff.** `POST /resolve/mixins/verify` re-boots the set and diffs
+  it against the persisted pre-fix baseline run: `fixed` says whether the previous crash
+  signature is gone, `exportsRemoved` lists the classes the loader no longer transforms —
+  ground truth that the targeted mixins were switched off. The UI offers it right after an
+  apply; the response always states the limit that client-section mixins are never exercised
+  by a server boot (`app/resolve/mixins.py`, `views.tsx`).
 - **Jar mixin-config patching (last resort, gated).** `POST /mods/patch` removes mixin
   entries, flips `required` or adjusts `priority` inside a jar's mixin config and re-zips it
   — perfectly precise, but it edits a file the user doesn't own, so the endpoint refuses to

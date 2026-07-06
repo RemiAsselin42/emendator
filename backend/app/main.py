@@ -35,6 +35,8 @@ from app.models import (
     MixinApplyResult,
     MixinPlanRequest,
     MixinPlanResult,
+    MixinVerifyRequest,
+    MixinVerifyResult,
     ResolutionPlan,
     ResolutionTargets,
     ResolutionVariants,
@@ -61,7 +63,12 @@ from app.profile import (
 from app.resolve.apply import apply_resolution, resolution_targets, revert_resolution
 from app.resolve.generate import build_resolution_plan, export_plan
 from app.resolve.jar_patch import patch_jar_mixin_config, unpatch_jar
-from app.resolve.mixins import apply_mixin_fixes, plan_mixin_fixes, revert_mixin_fixes
+from app.resolve.mixins import (
+    apply_mixin_fixes,
+    plan_mixin_fixes,
+    revert_mixin_fixes,
+    verify_mixin_fixes,
+)
 from app.resolve.variants import collect_recipe_variants, recipe_winner_bodies
 from app.runner.artifacts import list_runs, read_run_text, read_run_verdict
 from app.runner.bisect import BisectProgress, bisect_set
@@ -360,6 +367,20 @@ def resolve_mixins_apply(req: MixinApplyRequest) -> MixinApplyResult:
 def resolve_mixins_revert(req: RevertRequest) -> MixinApplyResult:
     """Undo a prior mixin apply by its manifest (restore files, re-enable jars)."""
     return revert_mixin_fixes(Path(req.manifest))
+
+
+@app.post("/resolve/mixins/verify", response_model=MixinVerifyResult)
+def resolve_mixins_verify(req: MixinVerifyRequest) -> MixinVerifyResult:
+    """Re-boot the set and diff against the pre-fix baseline run (§2.6).
+
+    Long-running: a real boot. ``fixed`` = the baseline crash signature is
+    gone; ``exportsRemoved`` = classes no longer transformed by the loader.
+    Client-section mixins are never exercised by a server boot — the response
+    note says so.
+    """
+    root = _require_dir(req.path)
+    profile, _ = _resolve_for_jars(mods_jars(detect_instance(root)), req.version)
+    return verify_mixin_fixes(root, profile, req.baseline_run_id)
 
 
 @app.post("/mods/patch", response_model=JarPatchResult)

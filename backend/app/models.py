@@ -506,6 +506,29 @@ class MixinApplyResult(CamelModel):
     message: str | None = None
 
 
+class MixinVerifyRequest(CamelModel):
+    """Body of ``POST /resolve/mixins/verify``: re-boot and compare to a baseline."""
+
+    path: str
+    version: str | None = None
+    # A persisted run to compare against (the failing boot before the fix).
+    baseline_run_id: str | None = None
+
+
+class MixinVerifyResult(CamelModel):
+    """Did the fix work? The fresh verdict, diffed against the baseline run."""
+
+    verdict: RunVerdict
+    # True = the baseline crash signature is gone (clean boot or a different
+    # cause); None when there was no baseline to compare against.
+    fixed: bool | None = None
+    baseline_category: CrashCategory | None = None
+    # Classes the loader transformed in the baseline but no longer does — the
+    # ground-truth confirmation that the targeted mixins were switched off.
+    exports_removed: list[str] = []
+    note: str | None = None
+
+
 # --- Patch a jar's mixin config (last-resort fix, explicit consent) ----------
 
 
