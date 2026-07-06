@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Fabric modpack conflict analyzer (desktop app)",
+  "description": "Minecraft modpack conflict analyzer (desktop app, all loaders)",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
