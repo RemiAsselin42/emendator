@@ -1,10 +1,11 @@
-"""Persisted runtime credentials — currently just the CurseForge API key.
+"""Persisted runtime credentials — the CurseForge and Anthropic API keys.
 
-The key can arrive two ways, **env wins**: ``EMENDATOR_CURSEFORGE_API_KEY`` (env or
-.env), or a small JSON file under the emendator data dir written from the UI.
-:func:`load_into_settings` folds the file into the live :data:`settings` at startup;
-:func:`set_curseforge_key` rewrites the file *and* updates settings in place, so an
-install picks up a freshly entered key without a restart.
+Each key can arrive two ways, **env wins**: ``EMENDATOR_CURSEFORGE_API_KEY`` /
+``EMENDATOR_ANTHROPIC_API_KEY`` (env or .env), or a small JSON file under the
+emendator data dir written from the UI. :func:`load_into_settings` folds the
+file into the live :data:`settings` at startup; the setters rewrite the file
+*and* update settings in place, so an install picks up a freshly entered key
+without a restart.
 
 Stored in plaintext under the user's home (a local desktop tool, like most CLIs).
 Best-effort I/O: a missing/unreadable file just means "no stored key".
@@ -17,6 +18,7 @@ from typing import Any
 from app.config import settings
 
 _CURSEFORGE_KEY = "curseforgeApiKey"
+_ANTHROPIC_KEY = "anthropicApiKey"
 
 
 def _store_path() -> Path:
@@ -24,24 +26,37 @@ def _store_path() -> Path:
 
 
 def load_into_settings() -> None:
-    """Fold a stored CurseForge key into live settings, unless env already set one."""
-    if settings.curseforge_api_key:
-        return
-    stored = _read().get(_CURSEFORGE_KEY)
-    if isinstance(stored, str) and stored:
-        settings.curseforge_api_key = stored
+    """Fold stored keys into live settings, unless env already set them."""
+    data = _read()
+    if not settings.curseforge_api_key:
+        stored = data.get(_CURSEFORGE_KEY)
+        if isinstance(stored, str) and stored:
+            settings.curseforge_api_key = stored
+    if not settings.anthropic_api_key:
+        stored = data.get(_ANTHROPIC_KEY)
+        if isinstance(stored, str) and stored:
+            settings.anthropic_api_key = stored
 
 
 def set_curseforge_key(key: str | None) -> None:
     """Persist (or, when blank, clear) the CurseForge key and update live settings."""
+    settings.curseforge_api_key = _store(_CURSEFORGE_KEY, key)
+
+
+def set_anthropic_key(key: str | None) -> None:
+    """Persist (or, when blank, clear) the Anthropic key and update live settings."""
+    settings.anthropic_api_key = _store(_ANTHROPIC_KEY, key)
+
+
+def _store(field: str, key: str | None) -> str | None:
     cleaned = key.strip() if isinstance(key, str) else ""
-    settings.curseforge_api_key = cleaned or None
     data = _read()
     if cleaned:
-        data[_CURSEFORGE_KEY] = cleaned
+        data[field] = cleaned
     else:
-        data.pop(_CURSEFORGE_KEY, None)
+        data.pop(field, None)
     _write(data)
+    return cleaned or None
 
 
 def _read() -> dict[str, Any]:

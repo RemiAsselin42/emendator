@@ -17,6 +17,7 @@ echo "Building sidecar for $triple ..."
   cd backend
   uv run pyinstaller --onefile --name emendator-backend \
     --collect-submodules uvicorn --collect-submodules app --collect-submodules mcp \
+    --collect-submodules anthropic \
     --noconfirm run_sidecar.py
 )
 

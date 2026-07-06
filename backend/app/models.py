@@ -529,6 +529,52 @@ class MixinVerifyResult(CamelModel):
     note: str | None = None
 
 
+# --- AI fix loop (BYO Anthropic key; Phase 4) ---------------------------------
+
+
+class AnthropicStatus(CamelModel):
+    """Whether an Anthropic API key is configured (drives the Settings UI)."""
+
+    configured: bool
+
+
+class AnthropicKeyRequest(CamelModel):
+    """Body of ``POST /config/anthropic``: save (blank = clear) the BYO key."""
+
+    api_key: str
+
+
+class AiFixRequest(CamelModel):
+    """Body of ``POST /ai/fix``: run the AI fix loop on an instance."""
+
+    path: str
+    version: str | None = None
+    baseline_run_id: str | None = None  # the failing boot to verify against
+    max_iterations: int | None = None  # default: settings.ai_max_iterations
+
+
+class AiFixIteration(CamelModel):
+    """One decision the model took, with what happened when we executed it."""
+
+    action: str
+    reasoning: str
+    outcome: str
+
+
+AiFixStatus = Literal["fixed", "not_fixed", "stopped", "error"]
+
+
+class AiFixResult(CamelModel):
+    """Outcome of an AI fix loop: decisions, verification, spend."""
+
+    status: AiFixStatus
+    iterations: list[AiFixIteration] = []
+    manifest: str | None = None  # revert handle of the last apply, if any
+    input_tokens: int = 0
+    output_tokens: int = 0
+    message: str | None = None
+
+
 # --- Patch a jar's mixin config (last-resort fix, explicit consent) ----------
 
 
