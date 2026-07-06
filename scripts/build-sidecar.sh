@@ -16,7 +16,8 @@ echo "Building sidecar for $triple ..."
 (
   cd backend
   uv run pyinstaller --onefile --name emendator-backend \
-    --collect-submodules uvicorn --collect-submodules app --noconfirm run_sidecar.py
+    --collect-submodules uvicorn --collect-submodules app --collect-submodules mcp \
+    --noconfirm run_sidecar.py
 )
 
 mkdir -p src-tauri/binaries
