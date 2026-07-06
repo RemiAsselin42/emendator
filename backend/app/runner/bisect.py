@@ -190,7 +190,12 @@ def bisect_set(
         boots += 1
         emit("reduce", len(base) + len(subset))
         verdict = boot_jars(
-            base + subset, profile, request.timeout_seconds, request.memory, loader=loader
+            base + subset,
+            profile,
+            request.timeout_seconds,
+            request.memory,
+            loader=loader,
+            persist=False,  # trial boots would flood the runs retention window
         )
         return (
             verdict.status == "crash"

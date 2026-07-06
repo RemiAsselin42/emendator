@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as the additive `RunVerdict.mixinApplications`, and crash blame is enriched from the loader's
   synthetic handler names in stack traces (`handler$…$modid$…`), allowlisted against the booted
   jars' ids and merged into `cause.mods` (`app/runner/attribution.py`).
+- **Persisted run evidence.** Boot evidence survives the boot: `latest.log`, the newest crash
+  report and (for failed boots) the post-transform mixin export are copied per run under
+  `~/.emendator/runs/<id>/` with retention, browsable via `GET /runner/runs`,
+  `GET /runner/runs/{id}`, `/{id}/log`, `/{id}/crash`. Verdicts carry the full crash report
+  (`crashReport`) and the persisted-run handle (`runId`); bisect trial boots skip persistence so
+  they don't flood the retention window (`app/runner/artifacts.py`).
 
 ### Changed
 

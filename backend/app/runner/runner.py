@@ -25,6 +25,7 @@ from uuid import uuid4
 from app.analyzer.mods import read_jars_metadata
 from app.models import Loader, RunCause, RunRequest, RunStatus, RunVerdict
 from app.profile import VersionProfile
+from app.runner.artifacts import persist_run
 from app.runner.attribution import mods_in_stack_frames, parse_mixin_applications
 from app.runner.classify import extract_cause, reached_done, tail
 
@@ -133,11 +134,14 @@ def boot_jars(
     memory: str = "3G",
     network: str = "bridge",
     loader: Loader = "fabric",
+    persist: bool = True,
 ) -> RunVerdict:
     """Boot exactly ``jar_paths`` in a throwaway container and classify the log.
 
     This is the unit of work the bisector drives over subsets; ``run_set`` is a
-    thin wrapper that boots a whole folder.
+    thin wrapper that boots a whole folder. ``persist=False`` skips copying the
+    run's evidence into the runs directory (bisect trial boots — dozens of them
+    would flood the retention window).
     """
     start = time.monotonic()
     if not is_docker_available():
@@ -179,7 +183,7 @@ def boot_jars(
             for mod in mods_in_stack_frames(combined, _known_mod_ids(jar_paths)):
                 if mod not in cause.mods:
                     cause.mods.append(mod)
-        return RunVerdict(
+        verdict = RunVerdict(
             status=status,
             profile=profile.profile,
             duration_ms=_elapsed_ms(start),
@@ -187,7 +191,11 @@ def boot_jars(
             mixin_exports=_read_mixin_exports(workdir),
             mixin_applications=parse_mixin_applications(log_text),
             log_tail=tail(log_text, 40),
+            crash_report=crash,
         )
+        if persist:
+            persist_run(workdir, verdict)  # sets verdict.run_id; best-effort
+        return verdict
     finally:
         # Best-effort: a timed-out `docker run` can leave the container half-created
         # on the daemon. Force-remove it, but bound the call so cleanup can never
