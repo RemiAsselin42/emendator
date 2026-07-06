@@ -36,9 +36,10 @@ Quilt, Forge, NeoForge), and:
 1. produces a **conflict map** via static analysis (fast, offline-first);
 2. **confirms load-time conflicts with certainty** by booting a real headless server in an isolated container;
 3. **isolates the guilty pairs** through automated bisection when a boot crashes;
-4. **generates and applies no-code resolutions** (Almost Unified `unify.json`, recipe-override
-   datapacks, mixin disable / version-match) with per-conflict winner selection, written
-   **reversibly** into the live instance.
+4. **generates and applies no-code resolutions** with per-conflict winner selection: Almost
+   Unified `unify.json` and recipe-override datapacks written **reversibly** into the live
+   instance (manifest-based undo), plus jar-level mixin fixes (update to a compatible build,
+   or a `.disabled` rename restored in one click).
 
 It also takes inventory **beyond mods** (resource packs, datapacks, and an approximate
 index of the items/blocks the pack adds), and **enriches** the pack online (best-effort): Modrinth
@@ -110,9 +111,10 @@ end-to-end, but interfaces and behaviour may still change before a stable releas
 - **Headless runner** : Docker server boot with mixin-debug flags; OK / crash + cause
   classification, with a copyable, severity-coloured crash-log view.
 - **Bisection** : binary search down to the guilty subset in ~log₂(N) boots.
-- **Resolution hub** : per-conflict winner selection for recipes and tags, a mixin resolver
-  (version-match or reversible disable), and one-click apply into the live instance,
-  **reversibly** (every write is undoable from a manifest).
+- **Resolution hub** : per-conflict winner selection for recipes and tags, with one-click
+  apply into the live instance and manifest-based undo; a mixin resolver offering
+  version-match or a per-jar disable (a `.disabled` rename, restored in one click — not yet
+  covered by the apply manifest).
 - **Beyond mods** : resource-pack / datapack inventory, override detection, approximate
   item/block index.
 - **Online enrichment** : Modrinth hash lookup + update check, CurseForge links; one-click
