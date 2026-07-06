@@ -13,6 +13,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.analyzer.mixin_targets import DEFAULT_PRIORITY, INSTRUCTION_EXCLUSIVE_KINDS
 from app.models import Conflict, Mod
 from app.profile import VersionProfile
 
@@ -36,6 +37,25 @@ _CONVENTIONAL_NAMESPACES = frozenset({"c", "forge"})
 
 
 @dataclass
+class MixinMethodPatch:
+    """How one jar's mixins patch a single ``Class#method`` target."""
+
+    # Injector kinds hitting the method ("inject", "redirect", "overwrite", ...).
+    kinds: set[str] = field(default_factory=set)
+    # ``@At`` target selectors used by instruction-exclusive kinds — lets the
+    # detector tell "same call site" from "same method, different instruction".
+    exclusive_at: set[str] = field(default_factory=set)
+    # Effective priorities (@Mixin priority, else config priority, else 1000)
+    # of the mixin classes patching this method.
+    priorities: set[int] = field(default_factory=set)
+
+    def merge(self, other: "MixinMethodPatch") -> None:
+        self.kinds |= other.kinds
+        self.exclusive_at |= other.exclusive_at
+        self.priorities |= other.priorities
+
+
+@dataclass
 class JarIndex:
     """Everything the detectors need from one jar, read once by ``mods.py``."""
 
@@ -47,6 +67,8 @@ class JarIndex:
     mixin_targets: set[str] = field(default_factory=set)
     # "<target class>#<method>" pairs from injector annotations (method-level).
     mixin_method_targets: set[str] = field(default_factory=set)
+    # "<target class>#<method>" -> how this jar's mixins patch it.
+    mixin_method_patches: dict[str, MixinMethodPatch] = field(default_factory=dict)
     # Mod ids (and their `provides`) shipped as nested jars inside this jar.
     bundled_ids: set[str] = field(default_factory=set)
 
@@ -206,24 +228,32 @@ def _recipe_id_from_path(path: str) -> str | None:
 
 
 def detect_mixin_overlaps(indexes: list[JarIndex]) -> list[Conflict]:
-    """≥2 mods whose mixins target the same class.
+    """≥2 mods whose mixins target the same class, graded by how they patch it.
 
     Class-level overlap alone is coarse — many mods co-patch a vanilla class
-    (e.g. MinecraftClient) harmlessly — so it stays ``info``. But when the mods
-    also patch the **same method** of that class (from injector ``method``
-    targets) the conflict is far more likely, so it is raised to ``warning`` and
-    the shared methods are listed. The target stays class-level so the runtime
+    (e.g. MinecraftClient) harmlessly — so it stays ``info``. Mods patching the
+    **same method** of that class raise it to ``warning`` with the shared
+    methods listed. When the per-method patch info proves the combination
+    cannot coexist — two ``@Overwrite`` at the same priority (Mixin hard-fails)
+    or two instruction-exclusive injectors (``@Redirect``/``@ModifyConstant``)
+    on the same call site — it escalates to ``error``, with the reasoning in
+    ``detail.methodDetails``. The target stays class-level so the runtime
     mixin export (§7) can still confirm it. Names are intermediary
     (``net.minecraft.class_310``) in distributed jars but match across mods.
     """
     by_class: dict[str, set[str]] = defaultdict(set)
     by_class_method: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    # "Class#method" -> mod id -> merged patch info across that mod's jars.
+    patches: dict[str, dict[str, MixinMethodPatch]] = defaultdict(dict)
     for index in indexes:
         for target in index.mixin_targets:
             by_class[target].add(index.mod.id)
         for pair in index.mixin_method_targets:
             target, _, method = pair.partition("#")
             by_class_method[target][method].add(index.mod.id)
+        for key, patch in index.mixin_method_patches.items():
+            slot = patches[key].setdefault(index.mod.id, MixinMethodPatch())
+            slot.merge(patch)
 
     conflicts: list[Conflict] = []
     for target, mods in by_class.items():
@@ -232,15 +262,74 @@ def detect_mixin_overlaps(indexes: list[JarIndex]) -> list[Conflict]:
         shared_methods = sorted(
             method for method, owners in by_class_method[target].items() if len(owners) > 1
         )
+        severity = "warning" if shared_methods else "info"
         detail: dict[str, Any] = {"target": target}
         if shared_methods:
             detail["sharedMethods"] = shared_methods
+            method_details, hard = _shared_method_details(target, shared_methods, patches)
+            if method_details:
+                detail["methodDetails"] = method_details
+            if hard:
+                severity = "error"
         conflicts.append(
             Conflict(
                 type="mixin_overlap",
-                severity="warning" if shared_methods else "info",
+                severity=severity,
                 members=sorted(mods),
                 detail=detail,
             )
         )
     return conflicts
+
+
+def _shared_method_details(
+    target: str,
+    shared_methods: list[str],
+    patches: dict[str, dict[str, MixinMethodPatch]],
+) -> tuple[dict[str, Any], bool]:
+    """Per shared method: who patches it how, and whether that is a hard conflict.
+
+    Hard = the combination cannot coexist at runtime: ≥2 mods ``@Overwrite``
+    the method with a colliding (or default) priority — Mixin refuses to merge
+    the second one — or ≥2 mods use an instruction-exclusive injector on the
+    same call site (or one we could not attribute to a site). Distinct
+    overwrite priorities mean the highest silently wins: real but survivable,
+    so the conflict stays ``warning`` grade.
+    """
+    details: dict[str, Any] = {}
+    hard = False
+    for method in shared_methods:
+        by_mod = patches.get(f"{target}#{method}", {})
+        if len(by_mod) < 2:
+            continue
+        entry: dict[str, Any] = {
+            "kinds": {mod: sorted(patch.kinds) for mod, patch in sorted(by_mod.items())}
+        }
+
+        overwriters = sorted(mod for mod, patch in by_mod.items() if "overwrite" in patch.kinds)
+        if len(overwriters) >= 2:
+            entry["overwrites"] = overwriters
+            entry["priorities"] = {
+                mod: sorted(by_mod[mod].priorities or {DEFAULT_PRIORITY}) for mod in overwriters
+            }
+            claimed: set[int] = set()
+            for mod in overwriters:
+                mod_priorities = by_mod[mod].priorities or {DEFAULT_PRIORITY}
+                if claimed & mod_priorities:
+                    hard = True
+                claimed |= mod_priorities
+
+        exclusive = sorted(
+            mod for mod, patch in by_mod.items() if patch.kinds & INSTRUCTION_EXCLUSIVE_KINDS
+        )
+        if len(exclusive) >= 2:
+            entry["exclusive"] = exclusive
+            at_sets = [by_mod[mod].exclusive_at for mod in exclusive]
+            known = [s for s in at_sets if s]
+            unknown_site = len(known) < len(at_sets)
+            same_site = any(a & b for i, a in enumerate(known) for b in known[i + 1 :])
+            if unknown_site or same_site:
+                hard = True
+
+        details[method] = entry
+    return details, hard
