@@ -4,12 +4,14 @@
 > Emendator detects and resolves conflicts in large Minecraft modpacks **before** they crash your server.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](./LICENSE)
-[![Status: WIP](https://img.shields.io/badge/status-work%20in%20progress-orange.svg)](#roadmap)
+[![Status: alpha](https://img.shields.io/badge/status-alpha-yellow.svg)](#status--roadmap)
 
 ---
 
-> **Note** — Built in public and under active development; see the [roadmap](#roadmap) for what
-> is shippable today. The internal design brief lives in [`PROJECT.md`](./PROJECT.md).
+> **Note** — Built in public. The MVP is complete and the app runs end-to-end (**alpha**):
+> interfaces and behaviour may still change before a stable release. See
+> [status & roadmap](#status--roadmap) for what works today and what comes next. The internal
+> design brief lives in [`PROJECT.md`](./PROJECT.md).
 
 ## The problem
 
@@ -17,33 +19,37 @@ Building large modpacks (200–400 mods) produces conflicts that are painful to 
 Since 1.13, registries are namespaced (`modid:item`), so the old *numeric ID* collisions are gone.
 The conflicts that remain are subtler:
 
-- **Content duplication** — several mods add the same resource (copper, tin, …).
-- **Recipe collisions** — crafting recipes overlapping on the same grid.
-- **Mixin conflicts** — two mods patch the same vanilla method incompatibly (failed application = crash on load). The nastiest case.
-- **Dependency / version mismatches** — incompatibilities, duplicate jars.
+- **Content duplication** : several mods add the same resource (copper, tin, …).
+- **Recipe collisions** : crafting recipes overlapping on the same grid.
+- **Mixin conflicts** : two mods patch the same vanilla method incompatibly (failed application = crash on load). The nastiest case.
+- **Dependency / version mismatches** : incompatibilities, duplicate jars.
 
 Existing tooling is **fragmented and reactive** (post-crash). Nobody does **aggregated
 pre-launch analysis** or **automated bisection** of conflicts. Emendator does both.
 
 ## What it does
 
-A desktop application that takes a modpack — a launcher instance (CurseForge, Modrinth,
+A desktop application that takes a modpack, a launcher instance (CurseForge, Modrinth,
 Prism/MultiMC, or the vanilla launcher) or a bare `mods/` folder, on **any loader** (Fabric,
-Quilt, Forge, NeoForge) — and:
+Quilt, Forge, NeoForge), and:
 
 1. produces a **conflict map** via static analysis (fast, offline-first);
 2. **confirms load-time conflicts with certainty** by booting a real headless server in an isolated container;
 3. **isolates the guilty pairs** through automated bisection when a boot crashes;
-4. **generates no-code resolution configs** (Almost Unified `unify.json`, recipe-override datapacks).
+4. **generates and applies no-code resolutions** with per-conflict winner selection: Almost
+   Unified `unify.json` and recipe-override datapacks written **reversibly** into the live
+   instance (manifest-based undo), plus jar-level mixin fixes (update to a compatible build,
+   or a `.disabled` rename restored in one click).
 
 It also takes inventory **beyond mods** (resource packs, datapacks, and an approximate
 index of the items/blocks the pack adds), and **enriches** the pack online (best-effort): Modrinth
 hash lookup with update checks, plus CurseForge project links, so you can **update** an outdated jar
-or **install** a missing dependency in one click.
+or **install** a missing dependency in one click. Every long step (scan, headless test, bisection)
+streams **live progress**, and the UI flags when Docker isn't running.
 
 ### Core design bet
 
-> **A conflict is not a property of a jar — it is a property of a *set*.**
+> **A conflict is not a property of a jar, it is a property of a *set*.**
 
 Sandboxing each jar in isolation reveals nothing cross-mod: a mixin only breaks when both mods
 are present and the loader applies both transformers to the same class. The unit of test is
@@ -65,8 +71,8 @@ locates the culprits. Static only triggers a boot on ambiguous cases → boots (
 
 Two contracts hold the system together:
 
-- **Conflict map** — the pivot data model shared by the static analyzer, the runtime runner, and the resolution generator.
-- **Version profile** — all version-dependent constants (JDK, item format, datapack folders, tag namespace, Fabric API) live in a profile, never hardcoded. Supporting a new Minecraft version = adding a profile, not rewriting logic.
+- **Conflict map** : the pivot data model shared by the static analyzer, the runtime runner, and the resolution generator.
+- **Version profile** : all version-dependent constants (JDK, item format, datapack folders, tag namespace, Fabric API) live in a profile, never hardcoded. Supporting a new Minecraft version = adding a profile, not rewriting logic.
 
 The Minecraft version is **auto-detected** from the pack (with a manual override), and the
 detected loader drives the runner. **Default target block: `1.21.1`** (Java 21, item *components*,
@@ -84,29 +90,47 @@ dependency/version issues, duplicate jars · generation of `unify.json` and reci
 
 **Out of scope (surfaced in the UI, not silently ignored):** client-only mods (not loaded by a
 server, so visual/render conflicts are untestable) · *silent* conflicts (two mixins that coexist
-without crashing but break behavior) · a **headless client** (Xvfb / offscreen GL) — the runner
+without crashing but break behavior) ; a **headless client** (Xvfb / offscreen GL), the runner
 does server boots only. The item index is **approximate** (built from `lang`/`model` assets, so
 items registered purely in code aren't listed).
 
-## Roadmap
+## Status & roadmap
 
-Phases are strictly incremental — each ships independently with a clear Definition of Done.
-Items below are implemented but the project remains pre-release WIP (interfaces and behavior may
-still change).
+The original MVP (Phases 0–4 in [`PROJECT.md`](./PROJECT.md) §10) is **complete**: ingest a pack,
+map conflicts statically, confirm load-time conflicts with a headless boot, bisect a crash to the
+guilty pair, and generate **and apply** no-code resolutions. Emendator is **alpha**, usable
+end-to-end, but interfaces and behaviour may still change before a stable release.
 
-- [x] **Phase 0 — Foundation.** Tauri + React/Vite scaffold; local FastAPI; ingest a `mods/` folder; parse loader metadata → mod list + versions + environment in the UI.
-- [x] **Phase 1 — Static analyzer.** Load the version profile; detect tag overlap, recipe collision, declared mixin overlap, dependencies, duplicate jars; emit the conflict map; sortable UI.
-- [x] **Phase 2 — Headless runner.** Docker server (JDK + loader from the profile/detection); boot a given set with mixin-debug flags; capture + classify the log (OK / crash + cause).
-- [x] **Phase 3 — Automated bisection.** On crash, orchestrated binary search down to the guilty pair(s) in ~log₂(N) boots.
-- [x] **Phase 4 — No-code resolution.** Generate `unify.json` and recipe-override datapacks; preview and export from the UI.
+### What works today
 
-Landed beyond the original phases (see [`PROJECT.md`](./PROJECT.md) §2/§5/§7/§8):
+- **Ingestion** : launcher-native instances (CurseForge, Modrinth, Prism, MultiMC, vanilla) and
+  bare `mods/` folders, on all four loaders (Fabric, Quilt, Forge, NeoForge) via per-loader
+  metadata adapters.
+- **Static analysis** : tag overlap, recipe collision, declared mixin overlap, dependency and
+  duplicate-jar detection; profile-driven and fully offline.
+- **Headless runner** : Docker server boot with mixin-debug flags; OK / crash + cause
+  classification, with a copyable, severity-coloured crash-log view.
+- **Bisection** : binary search down to the guilty subset in ~log₂(N) boots.
+- **Resolution hub** : per-conflict winner selection for recipes and tags, with one-click
+  apply into the live instance and manifest-based undo; a mixin resolver offering
+  version-match or a per-jar disable (a `.disabled` rename, restored in one click — not yet
+  covered by the apply manifest).
+- **Beyond mods** : resource-pack / datapack inventory, override detection, approximate
+  item/block index.
+- **Online enrichment** : Modrinth hash lookup + update check, CurseForge links; one-click
+  **update** / **install**; CurseForge API key managed in-app.
+- **Auto version detection** with a manual override, and **live progress / health feedback**
+  (scan, test and bisection stream their progress; the UI warns when Docker isn't running).
 
-- **Multi-loader** ingestion (Fabric, Quilt, Forge, NeoForge) via per-loader metadata adapters.
-- **Launcher-native instances** — auto-discover and scan CurseForge / Modrinth / Prism / MultiMC / vanilla instances.
-- **Beyond mods** — resource packs, datapacks, override detection, approximate item/block index.
-- **Online enrichment** — Modrinth hash lookup + update check, CurseForge links; one-click **update** / **install**.
-- **Auto version detection** with a manual override pinned in the header.
+### On the horizon
+
+- **Smarter resolution apply** : detect the datapack load location for client instances, and
+  check Almost Unified is installed before emitting a `unify.json` (offer to install it otherwise).
+- **Wider version coverage** : more version-block profiles beyond the `1.21.1` default (adding a
+  profile, never rewriting logic ; see [Stack](#stack)).
+- **Out of scope for now** (surfaced in the UI, never silently ignored): a headless *client* for
+  visual/render conflicts, detection of *silent* mixin conflicts (behavioural, no crash), and a
+  complete code-registered item index ; detailed under [Scope](#scope).
 
 ## Safety
 

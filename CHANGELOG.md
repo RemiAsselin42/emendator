@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Live progress & health feedback.** Scan, headless test and bisection stream their progress
+  over Server-Sent Events — a percentage + phase label for scans, a per-boot status (`step`,
+  `boots`, `testing`, `remaining`) for bisection — so long operations show they're alive and how
+  far the search has narrowed. A Docker-availability probe warns in the UI when the daemon isn't
+  running, since the runner (and the auto-test after a scan) can't boot without it — endpoints
+  `GET /runner/docker`, `POST /instance/scan/stream`, `POST /runner/bisect/stream`
+  (`app/runner/runner.py`, `app/runner/bisect.py`, `lib/api.ts`).
+- **Crash-logs view.** A Logs sub-tab under Runtime collects every piece of crash evidence (the
+  suspected-cause excerpt plus the log tail), colours each line by severity, and offers a
+  one-click copy of the whole dump for a bug report (`views.tsx`).
+
+### Changed
+
+- **Install fallback skips platform pseudo-dependencies.** A missing "dependency" that is really
+  the game, Java or the loader is now reported as *not an installable mod* rather than a failed
+  lookup (`modrinth.NOT_INSTALLABLE`, `InstallResult`).
+
+### Fixed
+
+- **Slow `docker run` when Docker Desktop wakes from idle.** The first detached `docker run` after
+  the daemon spins its WSL2 backend up from idle can stall well past a second; it now waits up to
+  120 s and, on timeout, force-removes any half-created container instead of failing hard
+  (`app/runner/runner.py`).
+
 ## [0.1.2] — 2026-06-24
 
 ### Added
