@@ -127,6 +127,10 @@ end-to-end, but interfaces and behaviour may still change before a stable releas
   **update** / **install**; CurseForge API key managed in-app.
 - **Auto version detection** with a manual override, and **live progress / health feedback**
   (scan, test and bisection stream their progress; the UI warns when Docker isn't running).
+- **MCP server** : any MCP client (Claude Code, Claude Desktop, …) can drive the whole
+  pipeline — scan, boot, bisect, read run evidence, plan and apply the mixin fix ladder —
+  with mutations dry-run-gated behind explicit consent. One-click Claude Desktop package
+  via `scripts/build-mcpb.sh`; see [`docs/mcp.md`](./docs/mcp.md).
 
 ### On the horizon
 
