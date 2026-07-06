@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from app.analyzer.mods import read_jars_metadata, read_mods_metadata, scan_jars, scan_mods_folder
 from app.analyzer.packs import scan_datapacks, scan_resourcepacks
@@ -36,6 +36,7 @@ from app.models import (
     RevertRequest,
     RevertResult,
     RunRequest,
+    RunSummary,
     RunVerdict,
     ScanRequest,
     ScanResult,
@@ -54,12 +55,13 @@ from app.profile import (
 from app.resolve.apply import apply_resolution, resolution_targets, revert_resolution
 from app.resolve.generate import build_resolution_plan, export_plan
 from app.resolve.variants import collect_recipe_variants, recipe_winner_bodies
+from app.runner.artifacts import list_runs, read_run_text, read_run_verdict
 from app.runner.bisect import BisectProgress, bisect_set
 from app.runner.runner import detect_loader, is_docker_available, run_set
 from app.sources.discovery import discover_instances
 from app.sources.instance import detect_instance, mods_jars
 
-app = FastAPI(title="Emendator backend", version="0.1.2")
+app = FastAPI(title="Emendator backend", version="0.2.0")
 
 # Fold a UI-stored CurseForge key (if any) into live settings before serving, so
 # the install fallback is armed without a restart. Env-provided keys still win.
@@ -378,6 +380,39 @@ def runner_test(req: RunRequest) -> RunVerdict:
     folder = _require_dir(req.path)
     profile, _ = _resolve_for(folder, req.version)
     return run_set(req, profile)
+
+
+@app.get("/runner/runs", response_model=list[RunSummary])
+def runner_runs() -> list[RunSummary]:
+    """Persisted boot runs, newest first (evidence lives past the boot itself)."""
+    return list_runs()
+
+
+@app.get("/runner/runs/{run_id}", response_model=RunVerdict)
+def runner_run(run_id: str) -> RunVerdict:
+    """The full persisted verdict of one run (incl. attribution + crash report)."""
+    verdict = read_run_verdict(run_id)
+    if verdict is None:
+        raise HTTPException(status_code=404, detail=f"No such run: {run_id}")
+    return verdict
+
+
+@app.get("/runner/runs/{run_id}/log", response_class=PlainTextResponse)
+def runner_run_log(run_id: str) -> str:
+    """The run's unabridged ``latest.log``."""
+    text = read_run_text(run_id, "latest.log")
+    if text is None:
+        raise HTTPException(status_code=404, detail=f"No log for run: {run_id}")
+    return text
+
+
+@app.get("/runner/runs/{run_id}/crash", response_class=PlainTextResponse)
+def runner_run_crash(run_id: str) -> str:
+    """The run's newest crash report (404 when the boot produced none)."""
+    text = read_run_text(run_id, "crash-report.txt")
+    if text is None:
+        raise HTTPException(status_code=404, detail=f"No crash report for run: {run_id}")
+    return text
 
 
 @app.post("/runner/bisect", response_model=BisectResult)

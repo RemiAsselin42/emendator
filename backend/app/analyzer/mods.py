@@ -7,8 +7,9 @@ hardcoded) are read into a :class:`JarIndex`. Detection then runs purely in
 memory.
 
 Jars without recognized loader metadata, or that fail to parse, are non-fatal:
-they are collected as :class:`ScanError`. Only top-level jars are scanned (nested
-``META-INF/jars`` deferred).
+they are collected as :class:`ScanError`. Nested jars (jars-in-jars) contribute
+their mod ids and mixins; nested recipes/tags are intentionally excluded (see
+:func:`_collect_nested`).
 """
 
 import hashlib
@@ -20,9 +21,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from app.analyzer.detectors import JarIndex, detect_conflicts
-from app.analyzer.metadata import FABRIC_METADATA, parse_mod_metadata
-from app.analyzer.mixin_targets import extract_mixin_targets
+from app.analyzer.detectors import JarIndex, MixinMethodPatch, detect_conflicts
+from app.analyzer.metadata import FABRIC_METADATA, QUILT_METADATA, parse_mod_metadata
+from app.analyzer.mixin_targets import (
+    DEFAULT_PRIORITY,
+    INSTRUCTION_EXCLUSIVE_KINDS,
+    MixinTargets,
+    extract_mixin_targets,
+)
 from app.models import (
     Mod,
     ScanCounts,
@@ -65,13 +71,89 @@ def _read_data_jsons(
     return out
 
 
-def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> tuple[set[str], set[str]]:
-    """``@Mixin`` class targets and ``Class#method`` pairs across the jar's mixins."""
-    classes: set[str] = set()
-    methods: set[str] = set()
-    for name in names:
-        if not name.endswith(".mixins.json"):
+@dataclass
+class _JarMixins:
+    """The jar-level mixin footprint: flattened targets + per-method patch info."""
+
+    classes: set[str] = field(default_factory=set)
+    methods: set[str] = field(default_factory=set)
+    patches: dict[str, MixinMethodPatch] = field(default_factory=dict)
+
+    def merge(self, other: "_JarMixins") -> None:
+        self.classes |= other.classes
+        self.methods |= other.methods
+        for key, patch in other.patches.items():
+            self.patches.setdefault(key, MixinMethodPatch()).merge(patch)
+
+    def add(self, targets: MixinTargets, priority: int, required: bool = False) -> None:
+        """Fold one mixin class's extraction in; ``priority``/``required`` are config defaults."""
+        self.classes |= targets.classes
+        self.methods |= targets.methods
+        effective = targets.priority if targets.priority is not None else priority
+        for injection in targets.injections:
+            owners = [injection.owner] if injection.owner else sorted(targets.classes)
+            for owner in owners:
+                patch = self.patches.setdefault(f"{owner}#{injection.method}", MixinMethodPatch())
+                patch.kinds.add(injection.kind)
+                patch.priorities.add(effective)
+                patch.required = patch.required or required
+                if injection.kind in INSTRUCTION_EXCLUSIVE_KINDS:
+                    patch.exclusive_at.update(injection.at_targets)
+
+
+def _declared_mixin_configs(zf: zipfile.ZipFile, names: list[str]) -> set[str]:
+    """Mixin config paths declared in loader metadata, whatever their file name.
+
+    The suffix glob (``*.mixins.json``) catches the convention; this catches the
+    rest: Fabric's ``"mixins"`` array (strings or ``{"config": ...}`` objects),
+    Quilt's ``"mixin"`` (string or list), and the Forge/NeoForge
+    ``MixinConfigs`` manifest attribute (comma-separated).
+    """
+    declared: set[str] = set()
+    present = set(names)
+
+    def _entries(value: Any) -> list[str]:
+        out: list[str] = []
+        for entry in value if isinstance(value, list) else [value]:
+            if isinstance(entry, str) and entry:
+                out.append(entry)
+            elif isinstance(entry, dict) and isinstance(entry.get("config"), str):
+                out.append(entry["config"])
+        return out
+
+    for metadata_name, key in ((FABRIC_METADATA, "mixins"), (QUILT_METADATA, "mixin")):
+        if metadata_name not in present:
             continue
+        try:
+            data = json.loads(zf.read(metadata_name), strict=False)
+        except (json.JSONDecodeError, KeyError, OSError):
+            continue
+        if isinstance(data, dict):
+            declared.update(_entries(data.get(key)))
+
+    manifest_name = "META-INF/MANIFEST.MF"
+    if manifest_name in present:
+        try:
+            manifest = zf.read(manifest_name).decode("utf-8", "replace")
+        except (KeyError, OSError):
+            manifest = ""
+        # Manifest values wrap at 72 bytes with a leading-space continuation.
+        manifest = manifest.replace("\r\n", "\n").replace("\n ", "")
+        for line in manifest.splitlines():
+            if line.lower().startswith("mixinconfigs:"):
+                declared.update(
+                    part.strip() for part in line.split(":", 1)[1].split(",") if part.strip()
+                )
+
+    return {config for config in declared if config in present}
+
+
+def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> _JarMixins:
+    """``@Mixin`` targets, ``Class#method`` pairs and patch info across the jar."""
+    out = _JarMixins()
+    candidates = {name for name in names if name.endswith(".mixins.json")}
+    candidates |= _declared_mixin_configs(zf, names)
+    for name in sorted(candidates):
         try:
             config = json.loads(zf.read(name), strict=False)
         except (json.JSONDecodeError, KeyError, OSError):
@@ -79,6 +161,14 @@ def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> tuple[set[s
         if not isinstance(config, dict) or not isinstance(config.get("package"), str):
             continue
         base = config["package"].replace(".", "/")
+        config_priority = config.get("priority")
+        default_priority = config_priority if isinstance(config_priority, int) else DEFAULT_PRIORITY
+        required = config.get("required") is True
+        injectors = config.get("injectors")
+        if isinstance(injectors, dict):
+            default_require = injectors.get("defaultRequire")
+            if isinstance(default_require, int) and default_require >= 1:
+                required = True
         for section in _MIXIN_SECTIONS:
             mixin_classes = config.get(section)
             if not isinstance(mixin_classes, list):
@@ -91,9 +181,8 @@ def _collect_mixin_targets(zf: zipfile.ZipFile, names: list[str]) -> tuple[set[s
                     targets = extract_mixin_targets(zf.read(class_path))
                 except KeyError:
                     continue
-                classes |= targets.classes
-                methods |= targets.methods
-    return classes, methods
+                out.add(targets, default_priority, required)
+    return out
 
 
 _MAX_NEST_DEPTH = 4
@@ -104,8 +193,7 @@ class _Nested:
     """What we harvest from a jar's nested jars (jars-in-jars)."""
 
     ids: set[str] = field(default_factory=set)
-    mixin_classes: set[str] = field(default_factory=set)
-    mixin_methods: set[str] = field(default_factory=set)
+    mixins: _JarMixins = field(default_factory=_JarMixins)
 
 
 def _collect_nested(zf: zipfile.ZipFile, names: list[str], depth: int = 0) -> _Nested:
@@ -139,13 +227,10 @@ def _collect_nested(zf: zipfile.ZipFile, names: list[str], depth: int = 0) -> _N
                     provides = data.get("provides")
                     if isinstance(provides, list):
                         result.ids.update(p for p in provides if isinstance(p, str))
-                nested_classes, nested_methods = _collect_mixin_targets(nested, nested_names)
-                result.mixin_classes |= nested_classes
-                result.mixin_methods |= nested_methods
+                result.mixins.merge(_collect_mixin_targets(nested, nested_names))
                 deeper = _collect_nested(nested, nested_names, depth + 1)
                 result.ids |= deeper.ids
-                result.mixin_classes |= deeper.mixin_classes
-                result.mixin_methods |= deeper.mixin_methods
+                result.mixins.merge(deeper.mixins)
         except (KeyError, zipfile.BadZipFile, OSError):
             continue
     return result
@@ -163,16 +248,18 @@ def build_jar_index(
             if error is not None:
                 return None, error
             assert mod is not None
-            mixin_classes, mixin_methods = _collect_mixin_targets(zf, names)
+            mixins = _collect_mixin_targets(zf, names)
             nested = _collect_nested(zf, names)
+            mixins.merge(nested.mixins)
             index = JarIndex(
                 jar=jar_path.name,
                 mod=mod,
                 sha256=sha256,
                 recipes=_read_data_jsons(zf, names, profile.recipe_path),
                 item_tags=_read_data_jsons(zf, names, profile.tag_path),
-                mixin_targets=mixin_classes | nested.mixin_classes,
-                mixin_method_targets=mixin_methods | nested.mixin_methods,
+                mixin_targets=mixins.classes,
+                mixin_method_targets=mixins.methods,
+                mixin_method_patches=mixins.patches,
                 bundled_ids=nested.ids,
             )
     except zipfile.BadZipFile:

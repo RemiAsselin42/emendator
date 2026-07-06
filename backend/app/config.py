@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     curseforge_api_key: str | None = None
     # Where enrichment responses are cached; defaults to ~/.emendator/cache.
     cache_dir: str | None = None
+    # Where boot-run evidence is persisted; defaults to ~/.emendator/runs.
+    runs_dir: str | None = None
+    # How many persisted runs to keep (oldest pruned first).
+    runs_retention: int = 20
     # Origins allowed to call the sidecar: the Vite dev server and the bundled
     # Tauri webview (origin differs per platform).
     cors_origins: list[str] = [

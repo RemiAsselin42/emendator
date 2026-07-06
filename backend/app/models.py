@@ -194,6 +194,17 @@ class RunRequest(CamelModel):
     memory: str = "3G"
 
 
+class MixinApplication(CamelModel):
+    """One mixin application from the verbose mixin log, mod-attributed when possible."""
+
+    mixin_class: str
+    config: str  # the mixin config file that declared it (e.g. ``sodium.mixins.json``)
+    target_class: str
+    # Owning mod id when the loader annotated the config (Fabric-family), else None —
+    # the front can still map ``config`` to a mod via the scan's per-jar configs.
+    mod: str | None = None
+
+
 class RunVerdict(CamelModel):
     """Result of booting a mod set in a headless Fabric server container."""
 
@@ -204,7 +215,27 @@ class RunVerdict(CamelModel):
     # Classes the loader actually transformed (mixin debug export) — the
     # ground truth that confirms or refutes static mixin_overlap candidates (§7).
     mixin_exports: list[str] = []
+    # Per-application records parsed from the verbose mixin log: which mixin,
+    # from which config (hence which mod), patched which class. The attributed
+    # twin of ``mixin_exports``.
+    mixin_applications: list[MixinApplication] = []
     log_tail: str | None = None
+    # Full newest crash report, unabridged (the excerpt/tail are UI conveniences).
+    crash_report: str | None = None
+    # Persisted-evidence handle: fetch artifacts via GET /runner/runs/{run_id}/…
+    # None when persistence was skipped (bisect trials) or failed (best-effort).
+    run_id: str | None = None
+
+
+class RunSummary(CamelModel):
+    """One persisted run, as listed by ``GET /runner/runs``."""
+
+    run_id: str
+    status: RunStatus
+    profile: str
+    duration_ms: int
+    created_at: str  # ISO 8601, from the run directory's mtime
+    category: CrashCategory | None = None  # cause category when the boot failed
 
 
 # Outcome of automated bisection (PROJECT.md §10, Phase 3).

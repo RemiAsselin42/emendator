@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-07-06
+
 ### Added
 
 - **Live progress & health feedback.** Scan, headless test and bisection stream their progress
@@ -19,9 +21,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Crash-logs view.** A Logs sub-tab under Runtime collects every piece of crash evidence (the
   suspected-cause excerpt plus the log tail), colours each line by severity, and offers a
   one-click copy of the whole dump for a bug report (`views.tsx`).
+- **Runtime mixin attribution.** Boot verdicts now carry per-application records parsed from the
+  verbose mixin log — which mixin, from which config (hence which mod), patched which class —
+  as the additive `RunVerdict.mixinApplications`, and crash blame is enriched from the loader's
+  synthetic handler names in stack traces (`handler$…$modid$…`), allowlisted against the booted
+  jars' ids and merged into `cause.mods` (`app/runner/attribution.py`).
+- **Persisted run evidence.** Boot evidence survives the boot: `latest.log`, the newest crash
+  report and (for failed boots) the post-transform mixin export are copied per run under
+  `~/.emendator/runs/<id>/` with retention, browsable via `GET /runner/runs`,
+  `GET /runner/runs/{id}`, `/{id}/log`, `/{id}/crash`. Verdicts carry the full crash report
+  (`crashReport`) and the persisted-run handle (`runId`); bisect trial boots skip persistence so
+  they don't flood the retention window (`app/runner/artifacts.py`).
 
 ### Changed
 
+- **Mixin overlaps are graded by patch mechanics.** The analyzer now reads each mixin's bytecode
+  in full — `@Overwrite`, MixinExtras injectors (`@WrapOperation`, `@ModifyReturnValue`, …),
+  injection points (`@At`), `@Desc`-style selectors, priorities (annotation- and config-level),
+  owner-scoped selectors — and escalates a `mixin_overlap` to `error` when the combination
+  provably cannot coexist: two `@Overwrite` of the same method at a colliding priority, or two
+  instruction-exclusive injectors (`@Redirect`/`@ModifyConstant`) on the same call site. Mixin
+  configs are discovered from loader metadata (Fabric `mixins`, Quilt `mixin`, Forge
+  `MixinConfigs` manifest attribute) as well as the `*.mixins.json` convention, and each config's
+  `required` flag feeds a fatal-vs-silent `requiredBy` signal. The per-method reasoning ships in
+  the conflict's additive `methodDetails` payload (`app/analyzer/mixin_targets.py`,
+  `app/analyzer/detectors.py`, `app/analyzer/mods.py`).
 - **Install fallback skips platform pseudo-dependencies.** A missing "dependency" that is really
   the game, Java or the loader is now reported as *not an installable mod* rather than a failed
   lookup (`modrinth.NOT_INSTALLABLE`, `InstallResult`).
@@ -134,7 +158,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   datapacks, with preview and export from the UI.
 - **CI.** Windows installer build and draft release on tag.
 
-[Unreleased]: https://github.com/RemiAsselin42/emendator/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/RemiAsselin42/emendator/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/RemiAsselin42/emendator/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/RemiAsselin42/emendator/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/RemiAsselin42/emendator/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/RemiAsselin42/emendator/releases/tag/v0.1.0
