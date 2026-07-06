@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now also reads each version's Modrinth dependency metadata and resolves `incompatible`
   declarations against the pack: `Mod.incompatibleWith` lists the in-pack mods a build is
   formally incompatible with (`app/enrich/modrinth.py`, `app/enrich/install.py`).
+- **Jar mixin-config patching (last resort, gated).** `POST /mods/patch` removes mixin
+  entries, flips `required` or adjusts `priority` inside a jar's mixin config and re-zips it
+  — perfectly precise, but it edits a file the user doesn't own, so the endpoint refuses to
+  act without `confirm: true` and the original jar is kept as `.bak` (`POST /mods/unpatch`
+  restores it). Loaders perform no jar integrity checks, so the patched jar loads normally
+  (`app/resolve/jar_patch.py`).
 
 ### Changed
 

@@ -425,6 +425,39 @@ class UpdateResult(CamelModel):
     message: str | None = None
 
 
+# --- Patch a jar's mixin config (last-resort fix, explicit consent) ----------
+
+
+class JarPatchRequest(CamelModel):
+    """Body of ``POST /mods/patch``: edit a jar's mixin config in place.
+
+    Last-resort lever, gated: ``confirm`` must be true — the caller has shown
+    the user the caveats (licensing, pack-manifest hash drift, voided upstream
+    support). The original jar is kept as ``<jar>.bak``.
+    """
+
+    path: str  # the mods folder containing the jar
+    jar: str
+    # config entry name (e.g. "sodium.mixins.json") -> mixin entries to drop
+    remove_mixins: dict[str, list[str]] | None = None
+    set_required: dict[str, bool] | None = None
+    set_priority: dict[str, int] | None = None
+    confirm: bool = False
+
+
+JarPatchStatus = Literal["patched", "nothing", "error"]
+
+
+class JarPatchResult(CamelModel):
+    """Outcome of a jar mixin-config patch (or its restore)."""
+
+    status: JarPatchStatus
+    jar: str
+    backup: str | None = None  # the .bak filename holding the original
+    removed: dict[str, list[str]] = {}  # config -> entries actually dropped
+    message: str | None = None
+
+
 # --- Install a missing dependency (the runner flags it; we fetch it) ---------
 
 # installed = jar fetched and added; not_found = no provider match (or a platform

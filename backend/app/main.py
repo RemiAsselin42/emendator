@@ -29,6 +29,8 @@ from app.models import (
     InstallResult,
     Instance,
     InstanceReport,
+    JarPatchRequest,
+    JarPatchResult,
     ResolutionPlan,
     ResolutionTargets,
     ResolutionVariants,
@@ -54,6 +56,7 @@ from app.profile import (
 )
 from app.resolve.apply import apply_resolution, resolution_targets, revert_resolution
 from app.resolve.generate import build_resolution_plan, export_plan
+from app.resolve.jar_patch import patch_jar_mixin_config, unpatch_jar
 from app.resolve.variants import collect_recipe_variants, recipe_winner_bodies
 from app.runner.artifacts import list_runs, read_run_text, read_run_verdict
 from app.runner.bisect import BisectProgress, bisect_set
@@ -314,6 +317,35 @@ def mods_update(req: UpdateRequest) -> UpdateResult:
     loader = req.loader or detect_loader(mods_dir)
     game_version = req.version or _resolve_for(mods_dir, None)[0].profile
     return update_mod(mods_dir, req.jar, loader, game_version)
+
+
+@app.post("/mods/patch", response_model=JarPatchResult)
+def mods_patch(req: JarPatchRequest) -> JarPatchResult:
+    """Edit a jar's mixin config in place (last-resort fix, explicit consent).
+
+    Removes mixin entries / flips ``required`` / adjusts ``priority`` and
+    re-zips; the original jar is kept as ``.bak``. Refused without
+    ``confirm: true`` — the UI must surface the caveats first (licensing,
+    pack-manifest hash drift, voided upstream support).
+    """
+    if not req.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Jar patching requires confirm: true after showing the caveats.",
+        )
+    return patch_jar_mixin_config(
+        _require_dir(req.path),
+        req.jar,
+        remove_mixins=req.remove_mixins,
+        set_required=req.set_required,
+        set_priority=req.set_priority,
+    )
+
+
+@app.post("/mods/unpatch", response_model=JarPatchResult)
+def mods_unpatch(req: JarPatchRequest) -> JarPatchResult:
+    """Restore a patched jar from its ``.bak`` (the revert path)."""
+    return unpatch_jar(_require_dir(req.path), req.jar)
 
 
 @app.post("/mods/rollback", response_model=UpdateResult)
