@@ -44,6 +44,7 @@ import {
   resolveTargets,
   revertMixinFixes,
   revertResolution,
+  rollbackMod,
   updateMod,
   verifyMixinFixes,
 } from "./lib/api";
@@ -2046,19 +2047,57 @@ function MixinMemberRow({
   // Narrow to a concrete Mod so the version-match button only renders (and type-checks)
   // when this member is a top-level jar with a compatible update available.
   const updatableMod = member.mod?.updateAvailable && member.jar ? member.mod : null;
+  const [rollingBack, setRollingBack] = useState(false);
+  const [rolledBack, setRolledBack] = useState<string | null>(null);
+  const rollback = async () => {
+    if (!member.jar) return;
+    setRollingBack(true);
+    try {
+      const r = await rollbackMod(modsPath, member.jar, version, member.mod?.loader);
+      if (r.status === "updated" && r.newJar) {
+        setRolledBack(r.version ?? r.newJar);
+        onUpdated(member.jar);
+      } else {
+        setRolledBack(r.message ?? r.status);
+      }
+    } catch (e) {
+      setRolledBack(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRollingBack(false);
+    }
+  };
   return (
     <li className="mixin-member">
       {member.jar && <DisableButton modsPath={modsPath} jar={member.jar} />}
       <MixinMemberIdentity member={member} />
-      {updatableMod && member.jar && (
+      {member.mod?.incompatibleWith.length ? (
+        <span
+          className="tag-confirmed"
+          title={`Declared incompatible on Modrinth with: ${member.mod.incompatibleWith.join(", ")}`}
+        >
+          incompatible: {member.mod.incompatibleWith.join(", ")}
+        </span>
+      ) : null}
+      {member.jar && member.mod?.provider === "modrinth" && (
         <div className="mixin-member-actions">
-          <UpdateButton
-            mod={updatableMod}
-            modsPath={modsPath}
-            version={version}
-            alreadyUpdated={updatedJars.has(member.jar)}
-            onUpdated={onUpdated}
-          />
+          {updatableMod && (
+            <UpdateButton
+              mod={updatableMod}
+              modsPath={modsPath}
+              version={version}
+              alreadyUpdated={updatedJars.has(member.jar)}
+              onUpdated={onUpdated}
+            />
+          )}
+          <button
+            type="button"
+            className="btn-secondary no-wrap"
+            onClick={() => void rollback()}
+            disabled={rollingBack || rolledBack !== null || updatedJars.has(member.jar)}
+            title="Swap this jar for the Modrinth release just before it — the safe move when the current build introduced the conflict."
+          >
+            {rollingBack ? "Rolling back…" : rolledBack ? `↩ ${rolledBack}` : "Roll back"}
+          </button>
         </div>
       )}
     </li>
