@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Crash-logs view.** A Logs sub-tab under Runtime collects every piece of crash evidence (the
   suspected-cause excerpt plus the log tail), colours each line by severity, and offers a
   one-click copy of the whole dump for a bug report (`views.tsx`).
+- **Runtime mixin attribution.** Boot verdicts now carry per-application records parsed from the
+  verbose mixin log — which mixin, from which config (hence which mod), patched which class —
+  as the additive `RunVerdict.mixinApplications`, and crash blame is enriched from the loader's
+  synthetic handler names in stack traces (`handler$…$modid$…`), allowlisted against the booted
+  jars' ids and merged into `cause.mods` (`app/runner/attribution.py`).
 
 ### Changed
 

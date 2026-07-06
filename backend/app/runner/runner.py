@@ -25,6 +25,7 @@ from uuid import uuid4
 from app.analyzer.mods import read_jars_metadata
 from app.models import Loader, RunCause, RunRequest, RunStatus, RunVerdict
 from app.profile import VersionProfile
+from app.runner.attribution import mods_in_stack_frames, parse_mixin_applications
 from app.runner.classify import extract_cause, reached_done, tail
 
 _IMAGE = "itzg/minecraft-server"
@@ -171,12 +172,20 @@ def boot_jars(
         log_text = _read_log(workdir)
         crash = _read_crash_report(workdir)
         status, cause = _decide(outcome, log_text, crash)
+        if cause is not None:
+            # Blame mods named by synthetic mixin-handler stack frames; only on
+            # failure so a clean boot never pays the per-jar metadata re-read.
+            combined = "\n".join(filter(None, (log_text, crash)))
+            for mod in mods_in_stack_frames(combined, _known_mod_ids(jar_paths)):
+                if mod not in cause.mods:
+                    cause.mods.append(mod)
         return RunVerdict(
             status=status,
             profile=profile.profile,
             duration_ms=_elapsed_ms(start),
             cause=cause,
             mixin_exports=_read_mixin_exports(workdir),
+            mixin_applications=parse_mixin_applications(log_text),
             log_tail=tail(log_text, 40),
         )
     finally:
@@ -257,6 +266,16 @@ def _read_crash_report(workdir: Path) -> str | None:
         return None
     reports = sorted(crash_dir.glob("*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
     return reports[0].read_text(errors="replace") if reports else None
+
+
+def _known_mod_ids(jar_paths: list[Path]) -> set[str]:
+    """Ids (and ``provides``) of the booted jars — the stack-frame blame allowlist."""
+    mods, _errors = read_jars_metadata(jar_paths)
+    ids: set[str] = set()
+    for mod in mods:
+        ids.add(mod.id)
+        ids.update(mod.provides)
+    return ids
 
 
 def _read_mixin_exports(workdir: Path) -> list[str]:
