@@ -5,11 +5,11 @@ description = "Local FastAPI sidecar for Emendator (drives parsing + Docker runn
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.139.0",
-    "uvicorn[standard]>=0.50.0",
+    "uvicorn[standard]>=0.51.0",
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
     "httpx>=0.28",
-    "mcp[cli]>=1.2",
+    "mcp[cli]>=1.28.1",
     "anthropic>=0.7",
 ]
 
@@ -18,7 +18,7 @@ dev = [
     "pytest>=8.3",
     "httpx>=0.28",
     "pyright>=1.1.411",
-    "ruff>=0.15.20",
+    "ruff>=0.15.21",
     "pyinstaller>=6.21.0",
 ]
 
